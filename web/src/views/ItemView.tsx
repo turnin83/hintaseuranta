@@ -7,6 +7,7 @@ import { dataVersion, refreshUnread, toast } from "../lib/store.ts";
 import { TopBar } from "../components/chrome.tsx";
 import { PriceChart, type ChartPoint, type ChartSeries } from "../components/PriceChart.tsx";
 import { IconExternal, IconPlus, IconRefresh } from "../components/icons.tsx";
+import { TagInput } from "../components/TagInput.tsx";
 import { DEFAULT_RULES, mergeRules, RULE_LABELS, type RuleName, type Rules } from "@shared/rules.ts";
 
 const RANGES = [
@@ -122,6 +123,7 @@ export function ItemView({ id }: { id: string }) {
           </button>
         </TopBar>
 
+        {item.tags.length > 0 && <p class="item-tags" style="margin-top:-4px">{item.tags.join(" · ")}</p>}
         <section class="hero" aria-label="Paras hinta nyt">
           {item.best_price_cents != null ? (
             <>
@@ -308,7 +310,7 @@ function LinkRow({ link: l, onChange }: { link: ProductLink; onChange: () => voi
 
 function EditPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }) {
   const [name, setName] = useState(item.name);
-  const [category, setCategory] = useState(item.category ?? "");
+  const [tags, setTags] = useState<string[]>(item.tags);
   const [target, setTarget] = useState(centsToInput(item.target_price_cents));
   const [priority, setPriority] = useState(item.priority);
   const [notes, setNotes] = useState(item.notes ?? "");
@@ -321,7 +323,7 @@ function EditPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }
     setBusy(true);
     const { error } = await supabase.from("wish_items").update({
       name: name.trim(),
-      category: category.trim() || null,
+      tags,
       target_price_cents: parseEurInput(target),
       priority,
       notes: notes.trim() || null,
@@ -362,9 +364,10 @@ function EditPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }
             </select>
           </label>
         </div>
-        <label class="field"><span>Kategoria</span>
-          <input value={category} placeholder="esim. TV" onInput={(e) => setCategory((e.target as HTMLInputElement).value)} />
-        </label>
+        <div class="field">
+          <label for="edit-tags"><span>Tagit</span></label>
+          <TagInput id="edit-tags" value={tags} onChange={setTags} />
+        </div>
         <label class="field"><span>Muistiinpanot</span>
           <textarea value={notes} onInput={(e) => setNotes((e.target as HTMLTextAreaElement).value)} />
         </label>

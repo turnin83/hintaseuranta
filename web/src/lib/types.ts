@@ -3,7 +3,7 @@ import type { Availability, PageData } from "@shared/types.ts";
 export type WishSummary = {
   id: string;
   name: string;
-  category: string | null;
+  tags: string[];
   target_price_cents: number | null;
   priority: 1 | 2 | 3;
   active: boolean;

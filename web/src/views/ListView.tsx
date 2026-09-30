@@ -1,14 +1,38 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import { supabase } from "../lib/supabase.ts";
 import type { WishSummary } from "../lib/types.ts";
 import { AVAILABILITY, ago, eur, pctDelta, signedPct } from "../lib/format.ts";
+import { countTags, hasTag } from "../lib/tags.ts";
 import { TopBar } from "../components/chrome.tsx";
 import { IconAlert, IconArrowDown, IconArrowUp, IconCheck, IconPlus } from "../components/icons.tsx";
+
+type Mode = "list" | "groups";
+const UNTAGGED = "\u0000untagged";
+
+// Per-device view preferences.
+function usePref<T extends string>(key: string, initial: T): [T, (v: T) => void] {
+  const [v, setV] = useState<T>(() => {
+    try {
+      return (localStorage.getItem(key) as T) ?? initial;
+    } catch {
+      return initial;
+    }
+  });
+  return [v, (next: T) => {
+    setV(next);
+    try {
+      localStorage.setItem(key, next);
+    } catch { /* private mode */ }
+  }];
+}
 
 export function ListView() {
   const [items, setItems] = useState<WishSummary[] | null>(null);
   const [showInactive, setShowInactive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = usePref<Mode>("list-mode", "list");
+  const [tag, setTag] = usePref<string>("list-tag", "");
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     supabase
@@ -22,11 +46,22 @@ export function ListView() {
       });
   }, []);
 
-  const visible = (items ?? [])
-    .filter((i) => showInactive || i.active)
+  const base = (items ?? []).filter((i) => showInactive || i.active);
+  const tagCounts = useMemo(() => countTags(base), [items, showInactive]);
+  const untaggedCount = base.filter((i) => i.tags.length === 0).length;
+  // A remembered tag that no longer exists falls back to "all".
+  const activeTag = tag === UNTAGGED ? (untaggedCount ? tag : "") : tagCounts.some((t) => t.tag === tag) ? tag : "";
+
+  const q = query.trim().toLocaleLowerCase("fi");
+  const visible = base
+    .filter((i) => !activeTag || (activeTag === UNTAGGED ? i.tags.length === 0 : hasTag(i.tags, activeTag)))
+    .filter((i) => !q || i.name.toLocaleLowerCase("fi").includes(q) || i.tags.some((t) => t.toLocaleLowerCase("fi").includes(q)))
     .sort((a, b) => Number(b.unread_alerts > 0) - Number(a.unread_alerts > 0) || a.priority - b.priority);
+
   const inactiveCount = (items ?? []).filter((i) => !i.active).length;
   const lastFetch = (items ?? []).map((i) => i.last_fetched_at).filter(Boolean).sort().at(-1) ?? null;
+  const hasTags = tagCounts.length > 0;
+  const showSearch = (items?.length ?? 0) > 6;
 
   return (
     <div class="page stack">
@@ -47,19 +82,91 @@ export function ListView() {
           </a>
         </div>
       )}
-      {visible.length > 0 && (
-        <>
+
+      {items && items.length > 0 && (
+        <div class="stack-sm">
+          {showSearch && (
+            <input
+              type="search"
+              placeholder="Hae nimellä tai tagilla"
+              aria-label="Hae toiveista"
+              value={query}
+              onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
+            />
+          )}
+          {hasTags && (
+            <div class="list-controls">
+              <div class="chips-scroll" role="group" aria-label="Suodata tagilla">
+                <button class="filter-chip" aria-pressed={!activeTag} onClick={() => setTag("")}>
+                  Kaikki <span class="n">{base.length}</span>
+                </button>
+                {tagCounts.map((t) => (
+                  <button key={t.tag} class="filter-chip" aria-pressed={activeTag === t.tag} onClick={() => setTag(activeTag === t.tag ? "" : t.tag)}>
+                    {t.tag} <span class="n">{t.count}</span>
+                  </button>
+                ))}
+                {untaggedCount > 0 && (
+                  <button class="filter-chip" aria-pressed={activeTag === UNTAGGED} onClick={() => setTag(activeTag === UNTAGGED ? "" : UNTAGGED)}>
+                    Ilman tagia <span class="n">{untaggedCount}</span>
+                  </button>
+                )}
+              </div>
+              <div class="seg" role="group" aria-label="Näkymä">
+                <button aria-pressed={mode === "list"} onClick={() => setMode("list")}>Lista</button>
+                <button aria-pressed={mode === "groups"} onClick={() => setMode("groups")}>Ryhmät</button>
+              </div>
+            </div>
+          )}
           <p class="meta">Viimeisin haku {ago(lastFetch)}</p>
+        </div>
+      )}
+
+      {items && items.length > 0 && visible.length === 0 && (
+        <p class="muted">Ei osumia{q ? ` haulla "${query.trim()}"` : ""}.</p>
+      )}
+
+      {visible.length > 0 && (mode === "groups" && hasTags
+        ? <Groups items={visible} order={tagCounts.map((t) => t.tag)} />
+        : (
           <div class="list">
             {visible.map((i) => <ItemCard key={i.id} item={i} />)}
           </div>
-        </>
-      )}
+        ))}
+
       {inactiveCount > 0 && (
         <button class="btn ghost" onClick={() => setShowInactive(!showInactive)}>
           {showInactive ? "Piilota pois käytöstä olevat" : `Näytä pois käytöstä olevat (${inactiveCount})`}
         </button>
       )}
+    </div>
+  );
+}
+
+/** One collapsible section per tag (most used first); an item with several tags appears in each. */
+function Groups({ items, order }: { items: WishSummary[]; order: string[] }) {
+  const groups = order
+    .map((tag) => ({ tag, items: items.filter((i) => hasTag(i.tags, tag)) }))
+    .filter((g) => g.items.length > 0);
+  const untagged = items.filter((i) => i.tags.length === 0);
+  if (untagged.length) groups.push({ tag: "Ilman tagia", items: untagged });
+
+  return (
+    <div class="stack">
+      {groups.map((g) => {
+        const unread = g.items.reduce((n, i) => n + i.unread_alerts, 0);
+        return (
+          <details class="group" open key={g.tag}>
+            <summary>
+              <h2>{g.tag}</h2>
+              <span class="meta">{g.items.length} {g.items.length === 1 ? "tuote" : "tuotetta"}</span>
+              {unread > 0 && <span class="chip good">{unread} uutta</span>}
+            </summary>
+            <div class="list">
+              {g.items.map((i) => <ItemCard key={i.id} item={i} />)}
+            </div>
+          </details>
+        );
+      })}
     </div>
   );
 }
@@ -101,6 +208,7 @@ function ItemCard({ item: i }: { item: WishSummary }) {
           <span class="chip warn"><IconAlert /> {i.failing_links === 1 ? "1 linkki ei toimi" : `${i.failing_links} linkkiä ei toimi`}</span>
         )}
       </div>
+      {i.tags.length > 0 && <p class="item-tags">{i.tags.join(" · ")}</p>}
     </a>
   );
 }

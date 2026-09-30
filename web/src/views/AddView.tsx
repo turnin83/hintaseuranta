@@ -6,6 +6,7 @@ import { go } from "../lib/router.ts";
 import { dataVersion, toast } from "../lib/store.ts";
 import { TopBar } from "../components/chrome.tsx";
 import { IconClipboard } from "../components/icons.tsx";
+import { TagInput } from "../components/TagInput.tsx";
 import { findUrl } from "@shared/url.ts";
 
 type ItemOpt = { id: string; name: string; eans: string[] };
@@ -20,6 +21,7 @@ export function AddView(props: { url: string | null; item: string | null }) {
   const [itemId, setItemId] = useState(props.item ?? "");
   const [name, setName] = useState("");
   const [target, setTarget] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
   const [sellers, setSellers] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
 
@@ -82,7 +84,7 @@ export function AddView(props: { url: string | null; item: string | null }) {
       if (mode === "new") {
         const { data, error } = await supabase
           .from("wish_items")
-          .insert({ name: name.trim(), target_price_cents: parseEurInput(target) })
+          .insert({ name: name.trim(), target_price_cents: parseEurInput(target), tags })
           .select("id")
           .single();
         if (error) throw error;
@@ -219,6 +221,10 @@ export function AddView(props: { url: string | null; item: string | null }) {
                   <label class="field"><span>Tavoitehinta (€, valinnainen)</span>
                     <input inputMode="decimal" value={target} placeholder="esim. 999" onInput={(e) => setTarget((e.target as HTMLInputElement).value)} />
                   </label>
+                  <div class="field">
+                    <label for="add-tags"><span>Tagit (valinnainen)</span></label>
+                    <TagInput id="add-tags" value={tags} onChange={setTags} />
+                  </div>
                 </>
               ) : (
                 <label class="field"><span>Toiveasia</span>
