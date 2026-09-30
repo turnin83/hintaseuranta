@@ -1,0 +1,16 @@
+# Supabase CLI config. Remote project: euqjaihhebvlbaghaeil (link with `npx supabase link`).
+project_id = "hintaseuranta"
+
+# All functions verify the caller in code (user JWT via auth.getUser, or x-cron-secret for pg_cron),
+# so gateway JWT verification is off. This also works with the new asymmetric/publishable keys.
+[functions.fetch-prices]
+verify_jwt = false
+
+[functions.preview-product]
+verify_jwt = false
+
+[functions.push-test]
+verify_jwt = false
+
+[functions.probe]
+verify_jwt = false

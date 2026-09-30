@@ -1,0 +1,23 @@
+{
+  "name": "hintaseuranta-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.11.3",
+    "@supabase/supabase-js": "^2.117.2",
+    "preact": "^11.0.0",
+    "uplot": "^1.6.32"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "sharp": "^0.35.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1"
+  }
+}

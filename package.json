@@ -1,0 +1,16 @@
+{
+  "name": "hintaseuranta",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "check:functions": "npx -y deno check --config supabase/functions/deno.json supabase/functions/fetch-prices/index.ts supabase/functions/preview-product/index.ts supabase/functions/push-test/index.ts supabase/functions/probe/index.ts",
+    "probe": "node scripts/probe-local.ts",
+    "vapid": "node scripts/generate-vapid.ts",
+    "dev": "npm --prefix web run dev",
+    "build": "npm --prefix web run build"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
