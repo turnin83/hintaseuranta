@@ -6,6 +6,7 @@ import { dataVersion, session, toast } from "../lib/store.ts";
 import { currentSubscription, disablePush, enablePush, platform } from "../lib/push.ts";
 import { TopBar } from "../components/chrome.tsx";
 import { IconShare } from "../components/icons.tsx";
+import { versionLabel } from "../lib/version.ts";
 
 const INTERVALS = [
   { min: 720, label: "2 kertaa päivässä", hint: "Oletus" },
@@ -28,6 +29,7 @@ export function SettingsView() {
         <p class="muted">{session.value?.user.email}</p>
         <button class="btn" onClick={() => supabase.auth.signOut()}>Kirjaudu ulos</button>
       </section>
+      <p class="meta num" style="text-align:center">Hintaseuranta {versionLabel()}</p>
     </div>
   );
 }

@@ -362,3 +362,14 @@ details.group > summary .chip { align-self: center; }
 details.group > summary::after { content: "–"; color: var(--text-3); font-size: 22px; align-self: center; width: 16px; text-align: center; }
 details.group:not([open]) > summary::after { content: "+"; }
 details.group > .list { padding-bottom: var(--sp-2); }
+
+/* ---------- Update available ---------- */
+.update-bar {
+  position: fixed; z-index: 30; left: var(--sp-4); right: var(--sp-4);
+  bottom: calc(var(--nav-h) + env(safe-area-inset-bottom) + 12px);
+  display: flex; align-items: center; gap: var(--sp-3);
+  max-width: 608px; margin: 0 auto; padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4);
+  border-radius: var(--r-card); background: var(--surface-2); border: 1px solid var(--line);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.25);
+}
+.update-bar span { flex: 1; font-weight: 500; }

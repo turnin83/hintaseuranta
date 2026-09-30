@@ -3,6 +3,7 @@ import { render } from "preact";
 import { App } from "./app.tsx";
 import { supabase } from "./lib/supabase.ts";
 import { session } from "./lib/store.ts";
+import { watchForUpdates } from "./lib/version.ts";
 import "./styles.css";
 
 supabase.auth.getSession().then(({ data }) => (session.value = data.session));
@@ -23,4 +24,5 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+watchForUpdates();
 render(<App />, document.getElementById("app")!);

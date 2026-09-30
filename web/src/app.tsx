@@ -2,6 +2,7 @@ import { useEffect } from "preact/hooks";
 import { route } from "./lib/router.ts";
 import { refreshUnread, session } from "./lib/store.ts";
 import { configMissing } from "./lib/supabase.ts";
+import { updateReady } from "./lib/version.ts";
 import { TabBar, Toast } from "./components/chrome.tsx";
 import { ListView } from "./views/ListView.tsx";
 import { ItemView } from "./views/ItemView.tsx";
@@ -44,6 +45,12 @@ export function App() {
       </main>
       <TabBar />
       <Toast />
+      {updateReady.value && (
+        <div class="update-bar" role="status">
+          <span>Uusi versio saatavilla</span>
+          <button class="btn primary" onClick={() => location.reload()}>Päivitä</button>
+        </div>
+      )}
     </div>
   );
 }
