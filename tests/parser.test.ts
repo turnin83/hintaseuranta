@@ -7,6 +7,7 @@ import { decodeEntities, parseJsonLdPage, parsePrice, normalizeAvailability } fr
 import { detectBotMarkers, isBlocked } from "../supabase/functions/_shared/botcheck.ts";
 import { normalizeUrl, domainOf, findUrl } from "../supabase/functions/_shared/url.ts";
 import { parseRobots, robotsAllows } from "../supabase/functions/_shared/robots.ts";
+import { parseHintaFiSearch, sellerMatchesShop } from "../supabase/functions/_shared/search.ts";
 
 const fixture = (name: string) =>
   gunzipSync(readFileSync(new URL(`./fixtures/${name}.html.gz`, import.meta.url))).toString("utf8");
@@ -132,4 +133,35 @@ test("robots: longest match, wildcards", () => {
   assert.equal(robotsAllows(g, ua, "/search/ok").allowed, true);
   assert.equal(robotsAllows(g, ua, "/fi/s").allowed, false);
   assert.equal(robotsAllows(g, ua, "/fi/sx").allowed, true);
+});
+
+test("hinta.fi search: EAN gives one hit", () => {
+  const hits = parseHintaFiSearch(fixture("hintafi-search-ean"));
+  assert.equal(hits.length, 1);
+  assert.deepEqual(hits[0], {
+    id: "5238122",
+    url: "https://hinta.fi/5238122/tcl-c8k-65c8k",
+    name: "TCL C8K 65C8K",
+    group: "Televisiot",
+    priceCents: 116312,
+    totalCents: 128962,
+    storeCount: 5,
+    inStock: true,
+  });
+});
+
+test("hinta.fi search: keyword page with many hits", () => {
+  const hits = parseHintaFiSearch(fixture("hintafi-search-many"));
+  assert.equal(hits.length, 20);
+  assert.ok(hits.every((h) => h.url.startsWith("https://hinta.fi/") && h.name && h.priceCents));
+});
+
+test("seller matches tracked shop", () => {
+  const shop = (domain: string, name: string | null = null) => ({ domain, name });
+  assert.ok(sellerMatchesShop("Power", shop("power.fi")));
+  assert.ok(sellerMatchesShop("Verkkokauppa.com", shop("verkkokauppa.com")));
+  assert.ok(sellerMatchesShop("Gigantti", shop("gigantti.fi", "Gigantti")));
+  assert.ok(sellerMatchesShop("Jimm's PC-store", shop("jimms.fi")));
+  assert.ok(!sellerMatchesShop("Proshop", shop("power.fi")));
+  assert.ok(!sellerMatchesShop("CDON", shop("hintaopas.fi", "Hintaopas")));
 });

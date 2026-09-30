@@ -8,6 +8,7 @@ import { TopBar } from "../components/chrome.tsx";
 import { PriceChart, type ChartPoint, type ChartSeries } from "../components/PriceChart.tsx";
 import { IconExternal, IconPlus, IconRefresh } from "../components/icons.tsx";
 import { TagInput } from "../components/TagInput.tsx";
+import { FindOffers } from "../components/FindOffers.tsx";
 import { DEFAULT_RULES, mergeRules, RULE_LABELS, type RuleName, type Rules } from "@shared/rules.ts";
 
 const RANGES = [
@@ -232,6 +233,7 @@ export function ItemView({ id }: { id: string }) {
         <div>
           {links.map((l) => <LinkRow key={l.id} link={l} onChange={reload} />)}
         </div>
+        {links.length > 0 && <FindOffers itemId={id} itemEans={eans as string[]} onAdded={reload} />}
       </section>
 
       <EditPanel item={item} onSaved={reload} />

@@ -14,7 +14,4 @@ export function extractPage(html: string, url: string): PageData | null {
   return { ...out, offers };
 }
 
-/** Case/spacing-insensitive seller match ("Verkkokauppa.com" vs "verkkokauppa.com"). */
-export function sellerKey(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9åäö]/g, "");
-}
+export { sellerKey } from "./search.ts";

@@ -21,6 +21,7 @@ kun hyvä ostoikkuna aukeaa. Mobile-first PWA (Vite + Preact), backend Supabase
 | `supabase/functions/fetch-prices` | hinnanhaku, säännöt, push |
 | `supabase/functions/preview-product` | URL → nimi, hinta, EAN, kaupan tila (lisäysnäkymä) |
 | `supabase/functions/push-test` | "Testaa ilmoitus" |
+| `supabase/functions/find-offers` | "Etsi muista kaupoista": hinta.fi-haku EAN-koodilla tai nimellä |
 | `supabase/functions/probe` | diagnostiikka Supabasen omasta verkosta |
 | `supabase/functions/_shared/` | parseri (JSON-LD + adapterit), robots.txt, säännöt, push |
 | `web/` | PWA |
@@ -34,6 +35,9 @@ Kauppoja ei ole kovakoodattu. Kun liität minkä tahansa tuotesivun, `preview-pr
 - **Suoraan (JSON-LD)**: useimmat kaupat (testattu: Verkkokauppa.com, Power, Veikon Kone).
 - **Adapteri**: vain kun JSON-LD ei riitä. Nyt: `verkkokauppa.com` (kampanjan vertailuhinta),
   `hintaopas.fi` (kauppakohtaiset tarjoukset Next.js-datasta). Lisää uusi `_shared/adapters.ts`:n `ADAPTERS`-rekisteriin + fixture-testi.
+- **Etsi muista kaupoista** (toiveasian detalji): hakee hinta.fi:stä saman tuotteen EAN-koodilla
+  (tai nimellä, jolloin valitaan oikea osuma) ja näyttää kaupat, joita ei vielä seurata. Valitut kaupat
+  tallentuvat yhdellä hinta.fi-linkillä. hintaopas.fi:n haku on robots.txt:ssä kielletty, joten sitä ei käytetä.
 - **Vertailusivu**: jos kauppa estää botit (esim. **Gigantti**: Vercel Security Checkpoint, 429), lisää
   tuote `hintaopas.fi`- tai `hinta.fi`-linkillä ja valitse listasta tallennettavat kaupat (esim. vain Gigantti).
 
@@ -147,6 +151,13 @@ Repo → Settings → Secrets → Actions: `SUPABASE_URL` ja `SUPABASE_ANON_KEY`
 3. Asetukset → **Salli ilmoitukset** → **Testaa ilmoitus**.
 4. Lisää tuotteita: liitä linkki tai jaa se kaupan sivulta Hinnat-sovellukseen (Android; iOS ei tue Web Share Targetia).
 
+## Tarjoukset nyt
+
+Välilehti listaa tuotteet, joiden paras saatavilla oleva hinta on vähintään 5 / 10 / 20 % alle
+30 päivän mediaanin, alittaa tavoitehinnan tai on kaikkien aikojen alin (vähintään 6 havaintoa).
+Järjestys: suurin alennus ensin, tavoitteen alitus ja alin koskaan nostavat. Vertailu tehdään omaan
+historiaan, ei kaupan ilmoittamaan "ennen"-hintaan.
+
 ## Black Friday -viikko
 
 Asetukset → Hakutiheys → **Tunnin välein**. Cron-lauseketta ei tarvitse muuttaa: 15 minuutin tick
@@ -187,5 +198,6 @@ Hintahälytykset eivät laukea, kun tuote on loppu (hinta voi olla näennäinen)
 npm test                  # parseri + säännöt (Node, tallennetut fixturet)
 npm run check:functions   # Deno-tyyppitarkistus Edge Functioneille
 npm run probe -- <url>    # diagnostiikka paikallisesti: robots, status, JSON-LD, bottiesto
+node scripts/find-local.ts <EAN tai hakusanat>   # "Etsi muista kaupoista" paikallisesti
 npm run build             # web
 ```

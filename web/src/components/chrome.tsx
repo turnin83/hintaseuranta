@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { route } from "../lib/router.ts";
 import { toastMsg, unreadCount } from "../lib/store.ts";
-import { IconBack, IconBell, IconList, IconPlus, IconSettings } from "./icons.tsx";
+import { IconBack, IconBell, IconList, IconPlus, IconSettings, IconTag } from "./icons.tsx";
 
 export function TopBar(props: { title: string; parent?: string; children?: ComponentChildren }) {
   return (
@@ -30,6 +30,7 @@ export function TabBar() {
   return (
     <nav class="tabbar" aria-label="Päävalikko">
       {tab("#/", r === "list" || r === "item", "Toiveet", <IconList />)}
+      {tab("#/deals", r === "deals", "Tarjoukset", <IconTag />)}
       {tab("#/alerts", r === "alerts", "Hälytykset", <IconBell />, n > 0 && (
         <span class="count" aria-label={`${n} lukematonta`}>{n > 99 ? "99+" : n}</span>
       ))}

@@ -1,9 +1,10 @@
-// Tiny hash router: #/ , #/item/<id>, #/alerts, #/add?url=..&item=.., #/settings
+// Tiny hash router: #/ , #/item/<id>, #/deals, #/alerts, #/add?url=..&item=.., #/settings
 import { signal } from "@preact/signals";
 
 export type Route =
   | { name: "list" }
   | { name: "item"; id: string }
+  | { name: "deals" }
   | { name: "alerts" }
   | { name: "add"; url: string | null; item: string | null }
   | { name: "settings" };
@@ -15,6 +16,8 @@ function parse(hash: string): Route {
   switch (parts[0]) {
     case "item":
       return parts[1] ? { name: "item", id: parts[1] } : { name: "list" };
+    case "deals":
+      return { name: "deals" };
     case "alerts":
       return { name: "alerts" };
     case "add":

@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.probe]
 verify_jwt = false
+
+[functions.find-offers]
+verify_jwt = false

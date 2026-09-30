@@ -7,6 +7,7 @@ import { TabBar, Toast } from "./components/chrome.tsx";
 import { ListView } from "./views/ListView.tsx";
 import { ItemView } from "./views/ItemView.tsx";
 import { AlertsView } from "./views/AlertsView.tsx";
+import { DealsView } from "./views/DealsView.tsx";
 import { AddView } from "./views/AddView.tsx";
 import { SettingsView } from "./views/SettingsView.tsx";
 import { LoginView } from "./views/LoginView.tsx";
@@ -39,6 +40,7 @@ export function App() {
       <main>
         {r.name === "list" && <ListView />}
         {r.name === "item" && <ItemView key={r.id} id={r.id} />}
+        {r.name === "deals" && <DealsView />}
         {r.name === "alerts" && <AlertsView />}
         {r.name === "add" && <AddView key={`${r.url}|${r.item}`} url={r.url} item={r.item} />}
         {r.name === "settings" && <SettingsView />}
