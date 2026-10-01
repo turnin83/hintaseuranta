@@ -3,17 +3,21 @@ import { supabase } from "../lib/supabase.ts";
 import type { WishSummary } from "../lib/types.ts";
 import { AVAILABILITY, ago, eur, pctDelta, signedPct } from "../lib/format.ts";
 import { countTags, hasTag } from "../lib/tags.ts";
+import { session } from "../lib/store.ts";
 import { TopBar } from "../components/chrome.tsx";
 import { IconAlert, IconArrowDown, IconArrowUp, IconCheck, IconPlus } from "../components/icons.tsx";
 
 type Mode = "list" | "groups";
+type Density = "cards" | "compact";
 const UNTAGGED = "\u0000untagged";
 
-// Per-device view preferences.
-function usePref<T extends string>(key: string, initial: T): [T, (v: T) => void] {
+// View preferences: stored on this device, per signed-in user (never shared with the household).
+function usePref<T extends string>(name: string, initial: T): [T, (v: T) => void] {
+  const key = `${session.value?.user.id ?? "anon"}:${name}`;
   const [v, setV] = useState<T>(() => {
     try {
-      return (localStorage.getItem(key) as T) ?? initial;
+      // Fallback: unprefixed key from versions before per-user prefs.
+      return (localStorage.getItem(key) ?? localStorage.getItem(name) ?? initial) as T;
     } catch {
       return initial;
     }
@@ -32,6 +36,7 @@ export function ListView() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = usePref<Mode>("list-mode", "list");
   const [tag, setTag] = usePref<string>("list-tag", "");
+  const [density, setDensity] = usePref<Density>("list-density", "cards");
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -111,12 +116,20 @@ export function ListView() {
                   </button>
                 )}
               </div>
-              <div class="seg" role="group" aria-label="Näkymä">
+            </div>
+          )}
+          <div class="view-controls">
+            {hasTags ? (
+              <div class="seg" role="group" aria-label="Ryhmittely">
                 <button aria-pressed={mode === "list"} onClick={() => setMode("list")}>Lista</button>
                 <button aria-pressed={mode === "groups"} onClick={() => setMode("groups")}>Ryhmät</button>
               </div>
+            ) : <span />}
+            <div class="seg" role="group" aria-label="Tiiviys">
+              <button aria-pressed={density === "cards"} onClick={() => setDensity("cards")}>Kortit</button>
+              <button aria-pressed={density === "compact"} onClick={() => setDensity("compact")}>Tiivis</button>
             </div>
-          )}
+          </div>
           <p class="meta">Viimeisin haku {ago(lastFetch)}</p>
         </div>
       )}
@@ -126,12 +139,8 @@ export function ListView() {
       )}
 
       {visible.length > 0 && (mode === "groups" && hasTags
-        ? <Groups items={visible} order={tagCounts.map((t) => t.tag)} />
-        : (
-          <div class="list">
-            {visible.map((i) => <ItemCard key={i.id} item={i} />)}
-          </div>
-        ))}
+        ? <Groups items={visible} order={tagCounts.map((t) => t.tag)} density={density} />
+        : <Items items={visible} density={density} />)}
 
       {inactiveCount > 0 && (
         <button class="btn ghost" onClick={() => setShowInactive(!showInactive)}>
@@ -143,7 +152,37 @@ export function ListView() {
 }
 
 /** One collapsible section per tag (most used first); an item with several tags appears in each. */
-function Groups({ items, order }: { items: WishSummary[]; order: string[] }) {
+function Items({ items, density }: { items: WishSummary[]; density: Density }) {
+  return density === "compact"
+    ? <div class="rows">{items.map((i) => <CompactRow key={i.id} item={i} />)}</div>
+    : <div class="list">{items.map((i) => <ItemCard key={i.id} item={i} />)}</div>;
+}
+
+/** One line per item: unread dot, name, change vs 30 d median, best price. */
+function CompactRow({ item: i }: { item: WishSummary }) {
+  const delta = i.best_price_cents != null && i.median_30d_cents ? pctDelta(i.best_price_cents, i.median_30d_cents) : null;
+  const targetHit = i.best_price_cents != null && i.target_price_cents != null && i.best_price_cents <= i.target_price_cents;
+  const out = i.best_availability === "out_of_stock";
+  return (
+    <a class={`row-item${i.active ? "" : " inactive"}`} href={`#/item/${i.id}`}>
+      <span class={`row-dot${i.unread_alerts > 0 ? " on" : ""}`} aria-hidden="true" />
+      <span class="row-name">
+        {i.name}
+        {i.unread_alerts > 0 && <span class="visually-hidden"> ({i.unread_alerts} uutta hälytystä)</span>}
+        {i.failing_links > 0 && <IconAlert class="row-warn" aria-label="Linkki ei toimi" />}
+      </span>
+      {delta != null && delta !== 0 && (
+        <span class={`row-delta num ${delta < 0 ? "down" : "up"}`}>{signedPct(delta)}</span>
+      )}
+      <span class={`row-price num${targetHit ? " is-hit" : ""}${out ? " is-out" : ""}`}>
+        {targetHit && <IconCheck aria-label="Tavoite alittui" />}
+        {i.best_price_cents != null ? eur(i.best_price_cents) : "–"}
+      </span>
+    </a>
+  );
+}
+
+function Groups({ items, order, density }: { items: WishSummary[]; order: string[]; density: Density }) {
   const groups = order
     .map((tag) => ({ tag, items: items.filter((i) => hasTag(i.tags, tag)) }))
     .filter((g) => g.items.length > 0);
@@ -161,9 +200,7 @@ function Groups({ items, order }: { items: WishSummary[]; order: string[] }) {
               <span class="meta">{g.items.length} {g.items.length === 1 ? "tuote" : "tuotetta"}</span>
               {unread > 0 && <span class="chip good">{unread} uutta</span>}
             </summary>
-            <div class="list">
-              {g.items.map((i) => <ItemCard key={i.id} item={i} />)}
-            </div>
+            <Items items={g.items} density={density} />
           </details>
         );
       })}

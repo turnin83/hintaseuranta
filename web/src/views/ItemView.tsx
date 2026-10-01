@@ -270,7 +270,7 @@ function LinkRow({ link: l, onChange }: { link: ProductLink; onChange: () => voi
     <div class="link-row">
       <div class="row" style="align-items:flex-start">
         <div style="min-width:0">
-          <strong>{l.shops?.name ?? hostOf(l.url)}</strong>
+          <strong>{l.shops?.name ?? hostOf(l.url)}{isAggregator ? " · vertailusivu" : ""}</strong>
           <div class="url">{l.model_name ?? l.url}</div>
         </div>
         <span class={`chip ${cls}`} style="flex:none">{label}</span>
@@ -279,6 +279,11 @@ function LinkRow({ link: l, onChange }: { link: ProductLink; onChange: () => voi
         Haettu {ago(l.last_fetched_at)}{l.ean ? ` · EAN ${l.ean}` : ""}{l.active ? "" : " · pois käytöstä"}
       </p>
       {l.last_error && l.last_status !== "ok" && <p class="meta">{l.last_error}</p>}
+      {isAggregator && (
+        <p class="meta">
+          Yksi haku tältä sivulta tallentaa {l.sellers?.length ? `${l.sellers.length} kaupan hinnat: ${l.sellers.join(", ")}` : "kaikkien sivulla olevien kauppojen hinnat"}.
+        </p>
+      )}
       {isAggregator && (
         <label class="field">
           <span>Tallennettavat kaupat</span>
