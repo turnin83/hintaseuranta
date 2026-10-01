@@ -2,13 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_RULES,
+  dailyMinMedian,
   describeAlert,
-  evaluateRules,
+  diffRules,
+  evaluateItemRules,
+  evaluateSeriesRules,
   median,
   mergeRules,
   passesCooldown,
+  type ItemState,
   type Obs,
-  type Rules,
 } from "../supabase/functions/_shared/rules.ts";
 
 const DAY = 86_400_000;
@@ -19,86 +22,110 @@ function series(prices: number[], availability: Obs["availability"] = "in_stock"
   return prices.map((p, i) => ({ ts: T0 + i * DAY / 2, priceCents: p, availability, lowest30dCents: null }));
 }
 
-function run(history: Obs[], current: Partial<Obs> & { priceCents: number }, rules: Rules = DEFAULT_RULES, target: number | null = null) {
+const item = (s: Partial<ItemState>): ItemState => ({
+  bestCents: null,
+  prevMinCents: null,
+  prevObsCount: 0,
+  medianCents: null,
+  medianDays: 0,
+  targetCents: null,
+  ...s,
+});
+const itemRules = (s: Partial<ItemState>, rules = DEFAULT_RULES) => evaluateItemRules(item(s), rules).map((c) => c.rule);
+
+function seriesRules(history: Obs[], current: Partial<Obs> & { priceCents: number }, othersBestCents: number | null = null, rules = DEFAULT_RULES) {
   const ts = (history.at(-1)?.ts ?? T0) + DAY / 2;
-  return evaluateRules({
+  return evaluateSeriesRules({
     current: { ts, availability: "in_stock", lowest30dCents: null, ...current },
     history,
-    targetCents: target,
+    othersBestCents,
     rules,
   }).map((c) => c.rule);
 }
 
-test("median", () => {
+test("median and daily-min median", () => {
   assert.equal(median([3, 1, 2]), 2);
-  assert.equal(median([1, 2, 3, 4]), 3); // rounds 2.5 -> 3
+  assert.equal(median([1, 2, 3, 4]), 3);
   assert.equal(median([]), null);
+  // Two shops per day: the day's minimum counts; out-of-stock ignored.
+  const obs: Obs[] = [
+    { ts: T0, priceCents: 1000, availability: "in_stock", lowest30dCents: null },
+    { ts: T0 + 1000, priceCents: 900, availability: "in_stock", lowest30dCents: null },
+    { ts: T0 + DAY, priceCents: 1100, availability: "in_stock", lowest30dCents: null },
+    { ts: T0 + DAY + 1000, priceCents: 500, availability: "out_of_stock", lowest30dCents: null },
+    { ts: T0 + 2 * DAY, priceCents: 950, availability: "in_stock", lowest30dCents: null },
+  ];
+  assert.deepEqual(dailyMinMedian(obs), { median: 950, days: 3 });
 });
 
-test("below target", () => {
-  assert.deepEqual(run(series([100000, 100000]), { priceCents: 90000 }, DEFAULT_RULES, 95000).includes("below_target"), true);
-  assert.deepEqual(run(series([100000, 100000]), { priceCents: 96000 }, DEFAULT_RULES, 95000).includes("below_target"), false);
-  assert.equal(run([], { priceCents: 95000 }, DEFAULT_RULES, 95000).includes("below_target"), true); // equal counts
+test("item: below target fires once for the item's best price", () => {
+  const c = evaluateItemRules(item({ bestCents: 5057, targetCents: 7500 }), DEFAULT_RULES);
+  assert.deepEqual(c, [{ rule: "below_target", level: "alert", priceCents: 5057, refCents: 7500 }]);
+  assert.deepEqual(itemRules({ bestCents: 7600, targetCents: 7500 }), []);
+  assert.deepEqual(itemRules({ bestCents: 7500, targetCents: 7500 }), ["below_target"]); // equal counts
+  assert.deepEqual(itemRules({ bestCents: null, targetCents: 7500 }), []);
 });
 
-test("all-time low requires N observations", () => {
-  const h = series([1000, 1000, 1000, 1000]); // 4 + current = 5 < 6
-  assert.equal(run(h, { priceCents: 900 }).includes("all_time_low"), false);
-  const h2 = series([1000, 1000, 1000, 1000, 1000]); // 5 + current = 6
-  assert.equal(run(h2, { priceCents: 900 }).includes("all_time_low"), true);
-  assert.equal(run(h2, { priceCents: 1000 }).includes("all_time_low"), false); // equal is not new low
+test("item: all-time low across all shops, needs N observations", () => {
+  assert.deepEqual(itemRules({ bestCents: 900, prevMinCents: 1000, prevObsCount: 4 }), []); // 5 < 6
+  assert.deepEqual(itemRules({ bestCents: 900, prevMinCents: 1000, prevObsCount: 5 }), ["all_time_low"]);
+  assert.deepEqual(itemRules({ bestCents: 1000, prevMinCents: 1000, prevObsCount: 50 }), []); // equal is not new
 });
 
-test("below 30-day median by X %", () => {
-  const h = series([1000, 1000, 1000, 1000]);
-  assert.equal(run(h, { priceCents: 900 }).includes("below_median"), true); // exactly 10 %
-  assert.equal(run(h, { priceCents: 901 }).includes("below_median"), false);
-  // Observations older than 30 d are ignored: only 2 recent -> not enough data
-  const old = [...series([500, 500, 500]).map((o) => ({ ...o, ts: o.ts - 60 * DAY })), ...series([1000, 1000])];
-  assert.equal(run(old, { priceCents: 800 }).includes("below_median"), false);
+test("item: below 30-day median needs 3 days of data", () => {
+  assert.deepEqual(itemRules({ bestCents: 900, medianCents: 1000, medianDays: 3 }), ["below_median"]); // 10 %
+  assert.deepEqual(itemRules({ bestCents: 901, medianCents: 1000, medianDays: 3 }), []);
+  assert.deepEqual(itemRules({ bestCents: 500, medianCents: 1000, medianDays: 2 }), []);
 });
 
-test("drop vs previous observation", () => {
-  assert.equal(run(series([1000]), { priceCents: 950 }).includes("drop"), true); // 5 %
-  assert.equal(run(series([1000]), { priceCents: 960 }).includes("drop"), false);
-  assert.equal(run([], { priceCents: 1 }).includes("drop"), false);
+test("series: drop only when the shop is now the cheapest (default)", () => {
+  // CS Megastore 72,41 -> 67,07 while Proshop sells at 50,57: not relevant
+  assert.deepEqual(seriesRules(series([7241]), { priceCents: 6707 }, 5057), []);
+  // Same drop when it becomes the cheapest
+  assert.deepEqual(seriesRules(series([7241]), { priceCents: 4990 }, 5057), ["drop"]);
+  // Only shop of the item
+  assert.deepEqual(seriesRules(series([1000]), { priceCents: 950 }, null), ["drop"]);
+  // Setting off: every shop
+  const all = mergeRules({ only_cheapest: false });
+  assert.deepEqual(seriesRules(series([7241]), { priceCents: 6707 }, 5057, all), ["drop"]);
+  // Under threshold
+  assert.deepEqual(seriesRules(series([1000]), { priceCents: 960 }, null), []);
 });
 
-test("back in stock", () => {
-  assert.deepEqual(run(series([1000], "out_of_stock"), { priceCents: 1000 }), ["back_in_stock"]);
-  assert.equal(run(series([1000], "in_stock"), { priceCents: 1000 }).includes("back_in_stock"), false);
-  assert.equal(run(series([1000], "out_of_stock"), { priceCents: 1000, availability: "out_of_stock" }).length, 0);
+test("series: back in stock only for the cheapest by default", () => {
+  assert.deepEqual(seriesRules(series([1000], "out_of_stock"), { priceCents: 1000 }, 1200), ["back_in_stock"]);
+  assert.deepEqual(seriesRules(series([1000], "out_of_stock"), { priceCents: 1000 }, 900), []);
+  assert.deepEqual(seriesRules(series([1000], "out_of_stock"), { priceCents: 1000, availability: "out_of_stock" }), []);
 });
 
-test("price alerts suppressed while out of stock", () => {
-  const r = run(series([1000, 1000, 1000, 1000, 1000]), { priceCents: 500, availability: "out_of_stock" }, DEFAULT_RULES, 900);
-  assert.deepEqual(r, []);
+test("series: no drop alert while out of stock", () => {
+  assert.deepEqual(seriesRules(series([1000]), { priceCents: 500, availability: "out_of_stock" }), []);
 });
 
-test("suspicious discount: shop claims discount but own history had same price", () => {
-  // 20 obs over 10 days at 1000, then a "campaign" claiming ref 1300 at 1000.
+test("series: suspicious discount is info and independent of cheapest", () => {
   const h = series(Array(20).fill(1000));
-  const c = evaluateRules({
+  const c = evaluateSeriesRules({
     current: { ts: h.at(-1)!.ts + DAY / 2, priceCents: 1000, availability: "in_stock", lowest30dCents: 1300 },
     history: h,
-    targetCents: null,
+    othersBestCents: 800,
     rules: DEFAULT_RULES,
   });
-  const s = c.find((x) => x.rule === "suspicious_discount")!;
-  assert.equal(s.level, "info");
-  assert.equal(s.refCents, 1000);
-  // Real discount (below own history) is not suspicious
-  const real = run(h, { priceCents: 900, lowest30dCents: 1000 });
-  assert.equal(real.includes("suspicious_discount"), false);
-  // Too little history (<7 days span) -> no verdict
-  assert.equal(run(series([1000, 1000, 1000]), { priceCents: 1000, lowest30dCents: 1300 }).includes("suspicious_discount"), false);
+  assert.deepEqual(c.map((x) => [x.rule, x.level, x.refCents]), [["suspicious_discount", "info", 1000]]);
+  assert.equal(seriesRules(series([1000, 1000, 1000]), { priceCents: 1000, lowest30dCents: 1300 }).includes("suspicious_discount"), false);
 });
 
-test("rules can be disabled per item", () => {
-  const rules = mergeRules({ drop: { enabled: false }, below_median: { pct: 50 } });
-  assert.equal(rules.drop.pct, 5);
-  assert.equal(run(series([1000, 1000, 1000]), { priceCents: 800 }, rules).includes("drop"), false);
-  assert.equal(run(series([1000, 1000, 1000]), { priceCents: 800 }, rules).includes("below_median"), false);
+test("rules merge: defaults <- household <- item, and diff", () => {
+  const household = { drop: { pct: 10 }, back_in_stock: false };
+  const itemOverride = { drop: { enabled: false } };
+  const r = mergeRules(household, itemOverride);
+  assert.deepEqual(r.drop, { enabled: false, pct: 10 });
+  assert.equal(r.back_in_stock, false);
+  assert.equal(r.below_target, true);
+  const base = mergeRules(household);
+  assert.deepEqual(diffRules(r, base), { drop: { enabled: false, pct: 10 } });
+  assert.deepEqual(diffRules(base, base), {});
+  // Legacy single-layer call still works
+  assert.equal(mergeRules({ cooldown_hours: 48 }).cooldown_hours, 48);
 });
 
 test("cooldown: again only if cheaper or 24 h passed", () => {

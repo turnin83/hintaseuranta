@@ -12,7 +12,8 @@ import { FindOffers } from "../components/FindOffers.tsx";
 import { setPendingDirectLink } from "../lib/direct-links.ts";
 import { sellerMatchesShop } from "@shared/search.ts";
 import type { Shop } from "../lib/types.ts";
-import { DEFAULT_RULES, mergeRules, RULE_LABELS, type RuleName, type Rules } from "@shared/rules.ts";
+import { diffRules, mergeRules, RULE_LABELS, type RuleName, type Rules } from "@shared/rules.ts";
+import { RulesForm, rulesSummary } from "../components/RulesForm.tsx";
 
 const RANGES = [
   { key: "30", label: "30 pv", days: 30 },
@@ -105,6 +106,8 @@ export function ItemView({ id }: { id: string }) {
   if (!item) return <div class="page"><TopBar title="" parent="#/" /><div class="skeleton" /></div>;
 
   const eans = [...new Set(links.map((l) => l.ean).filter(Boolean))];
+  const activeLinks = links.filter((l) => l.active);
+  const failingLinks = activeLinks.filter((l) => l.last_status && l.last_status !== "ok").length;
   const colorOf = new Map(chartSeries.map((s) => [s.key, s.colorVar]));
   const linkById = new Map(links.map((l) => [l.id, l]));
   // Shops whose own pages gave no price (bot protection or no product data): a direct link is pointless.
@@ -262,25 +265,33 @@ export function ItemView({ id }: { id: string }) {
         </section>
       )}
 
-      <section class="section" aria-labelledby="h-links">
-        <div class="section-head">
-          <h2 id="h-links">Linkit</h2>
-          <a class="btn" href={`#/add?item=${id}`}><IconPlus /> Lisää linkki</a>
-        </div>
-        {eans.length > 1 && (
-          <div class="notice warn">
-            <strong>Linkeillä on eri EAN-koodit</strong> ({eans.join(", ")}). Tarkista, että kaikki linkit ovat samaa mallia.
+      <div>
+        <EditPanel item={item} onSaved={reload} />
+        <RulesPanel item={item} onSaved={reload} />
+        <details class="panel" open={links.length === 0}>
+          <summary>
+            Linkit
+            <span class="summary-meta">
+              {activeLinks.length}{failingLinks > 0 ? ` · ${failingLinks} ongelma` : ""}{eans.length > 1 ? " · eri EAN" : ""}
+            </span>
+          </summary>
+          <div class="stack">
+            {eans.length > 1 && (
+              <div class="notice warn">
+                <strong>Linkeillä on eri EAN-koodit</strong> ({eans.join(", ")}). Tarkista, että kaikki linkit ovat samaa mallia.
+              </div>
+            )}
+            <div class="actions">
+              <a class="btn" href={`#/add?item=${id}`}><IconPlus /> Lisää linkki</a>
+            </div>
+            {links.length === 0 && <p class="muted">Ei linkkejä.</p>}
+            <div>
+              {links.map((l) => <LinkRow key={l.id} link={l} onChange={reload} />)}
+            </div>
+            {links.length > 0 && <FindOffers itemId={id} itemEans={eans as string[]} onAdded={reload} />}
           </div>
-        )}
-        {links.length === 0 && <p class="muted">Ei linkkejä.</p>}
-        <div>
-          {links.map((l) => <LinkRow key={l.id} link={l} onChange={reload} />)}
-        </div>
-        {links.length > 0 && <FindOffers itemId={id} itemEans={eans as string[]} onAdded={reload} />}
-      </section>
-
-      <EditPanel item={item} onSaved={reload} />
-      <RulesPanel item={item} onSaved={reload} />
+        </details>
+      </div>
     </div>
   );
 }
@@ -435,75 +446,61 @@ function EditPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }
 }
 
 function RulesPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }) {
-  const [r, setR] = useState<Rules>(mergeRules(item.rules));
+  const [household, setHousehold] = useState<unknown>({});
+  const base = mergeRules(household);
+  const custom = Object.keys((item.rules ?? {}) as object).length > 0;
+  const [editing, setEditing] = useState(custom);
+  const [r, setR] = useState<Rules>(mergeRules(household, item.rules));
   const [busy, setBusy] = useState(false);
-  const num = (e: Event) => Number((e.target as HTMLInputElement).value);
-  const chk = (e: Event) => (e.target as HTMLInputElement).checked;
 
-  const save = async (e: Event) => {
-    e.preventDefault();
+  useEffect(() => {
+    supabase.from("households").select("default_rules").maybeSingle().then(({ data }) => {
+      setHousehold(data?.default_rules ?? {});
+      setR(mergeRules(data?.default_rules ?? {}, item.rules));
+    });
+  }, [item.id]);
+
+  const store = async (rules: unknown, msg: string) => {
     setBusy(true);
-    const { error } = await supabase.from("wish_items").update({ rules: r }).eq("id", item.id);
+    const { error } = await supabase.from("wish_items").update({ rules }).eq("id", item.id);
     setBusy(false);
     if (error) toast(error.message);
     else {
-      toast("Säännöt tallennettu");
+      toast(msg);
       onSaved();
     }
   };
 
+  const effective = custom ? mergeRules(household, item.rules) : base;
   return (
     <details class="panel">
-      <summary>Hälytyssäännöt</summary>
-      <form class="stack" onSubmit={save}>
-        <label class="check">
-          <input type="checkbox" checked={r.below_target} onChange={(e) => setR({ ...r, below_target: chk(e) })} />
-          {RULE_LABELS.below_target}{item.target_price_cents == null ? " (aseta tavoitehinta)" : ""}
-        </label>
-        <div class="stack-sm">
-          <label class="check">
-            <input type="checkbox" checked={r.all_time_low.enabled} onChange={(e) => setR({ ...r, all_time_low: { ...r.all_time_low, enabled: chk(e) } })} />
-            {RULE_LABELS.all_time_low}
-          </label>
-          <label class="field"><span>Vaadi vähintään havaintoja</span>
-            <input type="number" min={2} max={100} value={r.all_time_low.min_obs} onInput={(e) => setR({ ...r, all_time_low: { ...r.all_time_low, min_obs: num(e) } })} />
-          </label>
-        </div>
-        <div class="stack-sm">
-          <label class="check">
-            <input type="checkbox" checked={r.below_median.enabled} onChange={(e) => setR({ ...r, below_median: { ...r.below_median, enabled: chk(e) } })} />
-            {RULE_LABELS.below_median}
-          </label>
-          <label class="field"><span>Vähintään % alle mediaanin</span>
-            <input type="number" min={1} max={90} value={r.below_median.pct} onInput={(e) => setR({ ...r, below_median: { ...r.below_median, pct: num(e) } })} />
-          </label>
-        </div>
-        <div class="stack-sm">
-          <label class="check">
-            <input type="checkbox" checked={r.drop.enabled} onChange={(e) => setR({ ...r, drop: { ...r.drop, enabled: chk(e) } })} />
-            {RULE_LABELS.drop} edellisestä havainnosta
-          </label>
-          <label class="field"><span>Vähintään % pudotus</span>
-            <input type="number" min={1} max={90} value={r.drop.pct} onInput={(e) => setR({ ...r, drop: { ...r.drop, pct: num(e) } })} />
-          </label>
-        </div>
-        <label class="check">
-          <input type="checkbox" checked={r.back_in_stock} onChange={(e) => setR({ ...r, back_in_stock: chk(e) })} />
-          {RULE_LABELS.back_in_stock}
-        </label>
-        <label class="check">
-          <input type="checkbox" checked={r.suspicious} onChange={(e) => setR({ ...r, suspicious: chk(e) })} />
-          {RULE_LABELS.suspicious_discount} (vain listaan, ei ilmoitusta)
-        </label>
-        <label class="field"><span>Saman hälytyksen toisto aikaisintaan (h)</span>
-          <input type="number" min={1} max={720} value={r.cooldown_hours} onInput={(e) => setR({ ...r, cooldown_hours: num(e) })} />
-          <span class="hint">Aiemmin, jos hinta laskee edelleen.</span>
-        </label>
-        <div class="actions">
-          <button class="btn primary" disabled={busy}>Tallenna säännöt</button>
-          <button type="button" class="btn ghost" onClick={() => setR(DEFAULT_RULES)}>Oletukset</button>
-        </div>
-      </form>
+      <summary>
+        Hälytyssäännöt
+        <span class="summary-meta">{custom ? "mukautettu" : "yleiset"}</span>
+      </summary>
+      <div class="stack">
+        <p class="muted">
+          {custom ? "Tällä tuotteella on omat säännöt: " : "Käytössä yleiset säännöt (Asetukset → Hälytykset): "}
+          {rulesSummary(effective)}.
+        </p>
+        {!editing ? (
+          <div class="actions">
+            <button class="btn" onClick={() => { setR(effective); setEditing(true); }}>Mukauta tälle tuotteelle</button>
+            <a class="btn ghost" href="#/settings">Yleiset säännöt</a>
+          </div>
+        ) : (
+          <form class="stack" onSubmit={(e) => { e.preventDefault(); store(diffRules(r, base), "Säännöt tallennettu tälle tuotteelle"); }}>
+            <RulesForm value={r} onChange={setR} targetSet={item.target_price_cents != null} />
+            <div class="actions">
+              <button class="btn primary" disabled={busy}>Tallenna</button>
+              <button type="button" class="btn ghost" disabled={busy}
+                onClick={() => { setEditing(false); store({}, "Palautettu yleisiin sääntöihin"); }}>
+                {custom ? "Palauta yleiset" : "Peru"}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </details>
   );
 }

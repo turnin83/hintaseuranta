@@ -178,19 +178,33 @@ Tarkista viikkoa ennen: Asetukset → *Viimeisimmät haut* ja *Kaupat* (virheet,
 Jos jokin kauppa estää myös Supabasen datakeskus-IP:t (Cloudflare-kaupat voivat toimia kotiverkosta mutta
 eivät pilvestä), aja `probe`-funktio (tai käytä vertailusivua). Varapolkuna voi ajaa haun GitHub Actionsissa.
 
-## Hälytyssäännöt (per toiveasia, muokattavissa)
+## Hälytyssäännöt
+
+Säännöt säädetään **Asetukset → Hälytykset** koko kotitaloudelle. Tuotteelle voi tehdä omat
+poikkeukset (tuotesivu → Hälytyssäännöt → *Mukauta tälle tuotteelle*); vain erot tallennetaan,
+joten yleisten sääntöjen muutokset koskevat muuten kaikkia tuotteita.
+Tehokkaat säännöt = oletukset ← kotitalous (`households.default_rules`) ← tuote (`wish_items.rules`).
+
+**Tuotetaso**: arvioidaan tuotteen parhaasta nykyisestä hinnasta kaikkien kauppojen yli (tuore ≤ 3 pv,
+ei loppu), kerran per ajo. Yksi hälytys per tuote, halvin kauppa mainitaan.
 
 | Sääntö | Oletus |
 |---|---|
 | Alittaa tavoitehinnan | päällä (tavoitehinta asetettava) |
-| Kaikkien aikojen alin | vähintään 6 havaintoa |
-| Alle 30 pv mediaanin | ≥ 10 % |
-| Pudotus edellisestä havainnosta | ≥ 5 % |
-| Palaa varastoon | päällä |
-| Epäilyttävä tarjous | kauppa ilmoittaa vertailuhinnan, mutta oma historia (≥ 7 pv) näyttää saman tai alemman hinnan 30 pv sisällä. Vain listaan, ei pushia. |
-| Cooldown | sama sääntö samalle linkille/kaupalle uudelleen vain, jos hinta laskee edelleen tai 24 h kulunut |
+| Kaikkien aikojen alin | alempi kuin mikään aiempi havainto, vähintään 6 havaintoa |
+| Alle 30 pv mediaanin | ≥ 10 % alle päivittäisten minimien mediaanin (vähintään 3 päivää) |
 
-Hintahälytykset eivät laukea, kun tuote on loppu (hinta voi olla näennäinen).
+**Kauppataso**: yksittäinen kauppa / vertailusivun myyjä.
+
+| Sääntö | Oletus |
+|---|---|
+| Pudotus edellisestä hinnasta | ≥ 5 % |
+| Palaa varastoon | päällä |
+| Vain kun kauppa on tuotteen halvin | päällä: pudotus / varastoon ilmoitetaan vain, jos kauppa on sen jälkeen halvin |
+| Epäilyttävä tarjous | kauppa ilmoittaa vertailuhinnan, mutta oma historia (≥ 7 pv) näyttää saman tai alemman hinnan 30 pv sisällä. Vain listaan, ei pushia. |
+
+**Toisto (cooldown)**: sama sääntö uudelleen vain, jos hinta laskee edelleen tai 24 h on kulunut
+(tuotetason säännöt per tuote, kauppatason per kauppa).
 
 ## Kehitys
 

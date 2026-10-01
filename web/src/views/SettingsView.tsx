@@ -7,6 +7,8 @@ import { currentSubscription, disablePush, enablePush, platform } from "../lib/p
 import { TopBar } from "../components/chrome.tsx";
 import { IconShare } from "../components/icons.tsx";
 import { versionLabel } from "../lib/version.ts";
+import { RulesForm, rulesSummary } from "../components/RulesForm.tsx";
+import { DEFAULT_RULES, diffRules, mergeRules, type Rules } from "@shared/rules.ts";
 
 const INTERVALS = [
   { min: 720, label: "2 kertaa päivässä", hint: "Oletus" },
@@ -20,6 +22,7 @@ export function SettingsView() {
     <div class="page stack-lg">
       <TopBar title="Asetukset" />
       <NotificationsSection />
+      <AlertRulesSection />
       <HouseholdSection />
       <IntervalSection />
       <ShopsSection />
@@ -107,6 +110,57 @@ function NotificationsSection() {
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+function AlertRulesSection() {
+  const [householdId, setHouseholdId] = useState<string | null>(null);
+  const [saved, setSaved] = useState<Rules>(DEFAULT_RULES);
+  const [r, setR] = useState<Rules>(DEFAULT_RULES);
+  const [custom, setCustom] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    supabase.from("households").select("id, default_rules").maybeSingle().then(({ data }) => {
+      if (!data) return;
+      setHouseholdId(data.id);
+      const m = mergeRules(data.default_rules);
+      setSaved(m);
+      setR(m);
+    });
+    supabase.from("wish_items").select("id", { count: "exact", head: true }).neq("rules", "{}").then(({ count }) => setCustom(count ?? 0));
+  }, []);
+
+  const save = async (next: Rules, msg: string) => {
+    if (!householdId) return;
+    setBusy(true);
+    const { error } = await supabase.from("households").update({ default_rules: diffRules(next, DEFAULT_RULES) }).eq("id", householdId);
+    setBusy(false);
+    if (error) return toast(error.message);
+    setSaved(next);
+    setR(next);
+    toast(msg);
+  };
+  const dirty = JSON.stringify(r) !== JSON.stringify(saved);
+
+  return (
+    <section class="section" aria-labelledby="h-rules">
+      <h2 id="h-rules">Hälytykset</h2>
+      <p class="muted">
+        Yleiset säännöt koskevat kaikkia tuotteita, joille ei ole tehty omia sääntöjä. Nyt käytössä: {rulesSummary(saved)}.
+        {custom ? ` Omat säännöt: ${custom} ${custom === 1 ? "tuote" : "tuotetta"}.` : ""}
+      </p>
+      <details class="panel">
+        <summary>Muokkaa yleisiä sääntöjä</summary>
+        <form class="stack" onSubmit={(e) => { e.preventDefault(); save(r, "Yleiset säännöt tallennettu"); }}>
+          <RulesForm value={r} onChange={setR} />
+          <div class="actions">
+            <button class="btn primary" disabled={busy || !dirty}>Tallenna</button>
+            <button type="button" class="btn ghost" disabled={busy} onClick={() => save(DEFAULT_RULES, "Palautettu oletussääntöihin")}>Palauta oletukset</button>
+          </div>
+        </form>
+      </details>
     </section>
   );
 }

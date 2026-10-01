@@ -445,3 +445,9 @@ details.group > .rows { margin-bottom: var(--sp-2); }
 .btn.small svg { width: 18px; height: 18px; }
 .who-name { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
 .series-row .who .meta { display: block; }
+
+/* ---------- Panels with a status line, indented sub-fields ---------- */
+details.panel > summary .summary-meta {
+  margin-left: var(--sp-2); font-family: var(--font-body); font-size: 14px; font-weight: 400; color: var(--text-3);
+}
+.field.indent { padding-left: 34px; }
