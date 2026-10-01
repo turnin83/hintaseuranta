@@ -10,6 +10,8 @@ import { IconExternal, IconPlus, IconRefresh } from "../components/icons.tsx";
 import { TagInput } from "../components/TagInput.tsx";
 import { FindOffers } from "../components/FindOffers.tsx";
 import { setPendingDirectLink } from "../lib/direct-links.ts";
+import { sellerMatchesShop } from "@shared/search.ts";
+import type { Shop } from "../lib/types.ts";
 import { DEFAULT_RULES, mergeRules, RULE_LABELS, type RuleName, type Rules } from "@shared/rules.ts";
 
 const RANGES = [
@@ -23,6 +25,7 @@ export function ItemView({ id }: { id: string }) {
   const [item, setItem] = useState<WishSummary | null>(null);
   const [links, setLinks] = useState<ProductLink[]>([]);
   const [series, setSeries] = useState<Series[]>([]);
+  const [shops, setShops] = useState<Shop[]>([]);
   const [points, setPoints] = useState<ChartPoint[]>([]);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("30");
@@ -36,7 +39,7 @@ export function ItemView({ id }: { id: string }) {
       const [it, ls, se, al] = await Promise.all([
         supabase.from("v_wish_summary").select("*").eq("id", id).maybeSingle(),
         supabase.from("product_links").select("*, shops(domain, name, strategy)").eq("wish_item_id", id).order("created_at"),
-        supabase.from("v_series").select("*").eq("wish_item_id", id),
+        supabase.from("v_series").select("*").eq("wish_item_id", id).eq("tracked", true),
         supabase.from("v_alerts").select("*").eq("wish_item_id", id).order("ts", { ascending: false }).limit(10),
       ]);
       if (!it.data) {
@@ -46,6 +49,7 @@ export function ItemView({ id }: { id: string }) {
       setItem(it.data as WishSummary);
       setLinks((ls.data ?? []) as ProductLink[]);
       setSeries((se.data ?? []) as Series[]);
+      supabase.from("shops").select("*").then(({ data }) => setShops((data ?? []) as Shop[]));
       setAlerts((al.data ?? []) as AlertEvent[]);
       if ((al.data ?? []).some((a) => !a.read)) {
         await supabase.rpc("mark_alerts_read", { p_wish_item: id });
@@ -103,6 +107,12 @@ export function ItemView({ id }: { id: string }) {
   const eans = [...new Set(links.map((l) => l.ean).filter(Boolean))];
   const colorOf = new Map(chartSeries.map((s) => [s.key, s.colorVar]));
   const linkById = new Map(links.map((l) => [l.id, l]));
+  // Shops whose own pages gave no price (bot protection or no product data): a direct link is pointless.
+  const noDirect = (seller: string) =>
+    shops.some((sh) =>
+      sh.strategy !== "aggregator" && sellerMatchesShop(seller, sh) &&
+      (sh.strategy === "blocked" || (!sh.last_ok_at && sh.last_probe != null && !sh.last_probe.source))
+    );
   // Cheapest current offer (fresh, not out of stock) gets the "Halvin nyt" mark.
   const fresh = orderedSeries.filter((s) => s.link_active && s.availability !== "out_of_stock" && Date.now() - Date.parse(s.ts) < 3 * 86_400_000);
   const cheapestKey = fresh.length
@@ -208,7 +218,10 @@ export function ItemView({ id }: { id: string }) {
                     <a class="btn small" href={s.url} target="_blank" rel="noopener noreferrer">
                       <IconExternal /> {viaComparison ? `Avaa ${siteName}` : `Avaa ${s.seller_name}`}
                     </a>
-                    {viaComparison && (
+                    {viaComparison && noDirect(s.seller) && (
+                      <span class="meta" style="align-self:center">Kaupan sivulta ei saa hintaa, haetaan vertailusivulta</span>
+                    )}
+                    {viaComparison && !noDirect(s.seller) && (
                       <a
                         class="btn small"
                         href={s.url}

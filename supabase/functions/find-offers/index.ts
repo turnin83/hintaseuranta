@@ -36,7 +36,7 @@ Deno.serve(async (req) => {
   const { data: linkData } = await admin.from("product_links")
     .select("id, url, ean, sellers, shops(domain, name, strategy)").eq("wish_item_id", item.id);
   const links = (linkData ?? []) as unknown as LinkRow[];
-  const { data: seriesData } = await admin.from("v_series").select("seller_name").eq("wish_item_id", item.id);
+  const { data: seriesData } = await admin.from("v_series").select("seller_name").eq("wish_item_id", item.id).eq("tracked", true);
 
   // Sellers already followed: direct shops, sellers seen in history, sellers selected on aggregator links.
   const directShops = links.filter((l) => l.shops && l.shops.strategy !== "aggregator").map((l) => l.shops!);

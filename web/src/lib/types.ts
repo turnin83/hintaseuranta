@@ -56,6 +56,7 @@ export type Series = {
   wish_item_id: string;
   url: string;
   link_active: boolean;
+  tracked: boolean; // link active and seller still selected (history of removed sellers is kept)
   domain: string;
   seller: string;
   seller_name: string;

@@ -162,6 +162,9 @@ test("seller matches tracked shop", () => {
   assert.ok(sellerMatchesShop("Verkkokauppa.com", shop("verkkokauppa.com")));
   assert.ok(sellerMatchesShop("Gigantti", shop("gigantti.fi", "Gigantti")));
   assert.ok(sellerMatchesShop("Jimm's PC-store", shop("jimms.fi")));
+  assert.ok(sellerMatchesShop("Kärkkäinen", shop("karkkainen.com")));
+  assert.ok(sellerMatchesShop("Power.fi", shop("power.fi")));
+  assert.ok(sellerMatchesShop("CS MEGASTORE", shop("csmegastore.fi")));
   assert.ok(!sellerMatchesShop("Proshop", shop("power.fi")));
   assert.ok(!sellerMatchesShop("CDON", shop("hintaopas.fi", "Hintaopas")));
 });

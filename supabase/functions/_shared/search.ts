@@ -45,9 +45,10 @@ export function parseHintaFiSearch(html: string): SearchHit[] {
   return hits;
 }
 
-/** Normalized seller / shop key: "Verkkokauppa.com" -> "verkkokauppacom". */
+/** Normalized seller / shop key: "Verkkokauppa.com" -> "verkkokauppacom", "Kärkkäinen" -> "karkkainen". */
 export function sellerKey(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9åäö]/g, "");
+  // Fold diacritics so seller names match domains ("Kärkkäinen" vs karkkainen.com).
+  return s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 /**

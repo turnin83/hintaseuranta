@@ -118,13 +118,12 @@ export function AddView(props: { url: string | null; item: string | null; seller
       const removed = page.kind === "shop" && mode === "existing"
         ? await removeShopFromComparisonLinks(wid, { domain: preview.domain, name: preview.shop.name })
         : [];
-      toast(removed.length
-        ? `Tallennettu. ${removed.join(", ")} haetaan nyt suoraan kaupasta.`
-        : "Tallennettu, haetaan ensimmäinen hinta…");
+      const direct = removed.length ? ` ${removed.join(", ")} haetaan nyt suoraan kaupasta, ei vertailusivulta.` : "";
+      toast(`Tallennettu, haetaan ensimmäinen hinta…${direct}`);
       go(`#/item/${wid}`);
       invoke("fetch-prices", { link_ids: [link.id] })
         .then(() => {
-          toast("Ensimmäinen hinta tallennettu");
+          toast(`Ensimmäinen hinta tallennettu.${direct}`);
           dataVersion.value++;
         })
         .catch((err) => toast(`Haku epäonnistui: ${(err as Error).message}`));
