@@ -42,7 +42,7 @@ export function App() {
         {r.name === "item" && <ItemView key={r.id} id={r.id} />}
         {r.name === "deals" && <DealsView />}
         {r.name === "alerts" && <AlertsView />}
-        {r.name === "add" && <AddView key={`${r.url}|${r.item}`} url={r.url} item={r.item} />}
+        {r.name === "add" && <AddView key={`${r.url}|${r.item}|${r.seller}`} url={r.url} item={r.item} seller={r.seller} />}
         {r.name === "settings" && <SettingsView />}
       </main>
       <TabBar />

@@ -158,7 +158,7 @@ function Items({ items, density }: { items: WishSummary[]; density: Density }) {
     : <div class="list">{items.map((i) => <ItemCard key={i.id} item={i} />)}</div>;
 }
 
-/** One line per item: unread dot, name, change vs 30 d median, best price. */
+/** Compact two-level row: name on top, price · change · shop underneath. */
 function CompactRow({ item: i }: { item: WishSummary }) {
   const delta = i.best_price_cents != null && i.median_30d_cents ? pctDelta(i.best_price_cents, i.median_30d_cents) : null;
   const targetHit = i.best_price_cents != null && i.target_price_cents != null && i.best_price_cents <= i.target_price_cents;
@@ -166,17 +166,22 @@ function CompactRow({ item: i }: { item: WishSummary }) {
   return (
     <a class={`row-item${i.active ? "" : " inactive"}`} href={`#/item/${i.id}`}>
       <span class={`row-dot${i.unread_alerts > 0 ? " on" : ""}`} aria-hidden="true" />
-      <span class="row-name">
-        {i.name}
-        {i.unread_alerts > 0 && <span class="visually-hidden"> ({i.unread_alerts} uutta hälytystä)</span>}
-        {i.failing_links > 0 && <IconAlert class="row-warn" aria-label="Linkki ei toimi" />}
-      </span>
-      {delta != null && delta !== 0 && (
-        <span class={`row-delta num ${delta < 0 ? "down" : "up"}`}>{signedPct(delta)}</span>
-      )}
-      <span class={`row-price num${targetHit ? " is-hit" : ""}${out ? " is-out" : ""}`}>
-        {targetHit && <IconCheck aria-label="Tavoite alittui" />}
-        {i.best_price_cents != null ? eur(i.best_price_cents) : "–"}
+      <span class="row-main">
+        <span class="row-name">
+          {i.name}
+          {i.unread_alerts > 0 && <span class="visually-hidden"> ({i.unread_alerts} uutta hälytystä)</span>}
+        </span>
+        <span class="row-sub">
+          <span class={`row-price num${targetHit ? " is-hit" : ""}${out || i.best_price_cents == null ? " is-out" : ""}`}>
+            {targetHit && <IconCheck aria-label="Tavoite alittui" />}
+            {i.best_price_cents != null ? eur(i.best_price_cents) : (i.link_count ? "Ei hintaa vielä" : "Ei linkkejä")}
+          </span>
+          {delta != null && delta !== 0 && (
+            <span class={`row-delta num ${delta < 0 ? "down" : "up"}`}>{signedPct(delta)}</span>
+          )}
+          {i.best_seller && <span class="row-seller">{i.best_seller}{out ? " · loppu" : ""}</span>}
+          {i.failing_links > 0 && <IconAlert class="row-warn" aria-label="Linkki ei toimi" />}
+        </span>
       </span>
     </a>
   );

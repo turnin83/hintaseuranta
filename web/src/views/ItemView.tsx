@@ -9,6 +9,7 @@ import { PriceChart, type ChartPoint, type ChartSeries } from "../components/Pri
 import { IconExternal, IconPlus, IconRefresh } from "../components/icons.tsx";
 import { TagInput } from "../components/TagInput.tsx";
 import { FindOffers } from "../components/FindOffers.tsx";
+import { setPendingDirectLink } from "../lib/direct-links.ts";
 import { DEFAULT_RULES, mergeRules, RULE_LABELS, type RuleName, type Rules } from "@shared/rules.ts";
 
 const RANGES = [
@@ -101,6 +102,15 @@ export function ItemView({ id }: { id: string }) {
 
   const eans = [...new Set(links.map((l) => l.ean).filter(Boolean))];
   const colorOf = new Map(chartSeries.map((s) => [s.key, s.colorVar]));
+  const linkById = new Map(links.map((l) => [l.id, l]));
+  // Cheapest current offer (fresh, not out of stock) gets the "Halvin nyt" mark.
+  const fresh = orderedSeries.filter((s) => s.link_active && s.availability !== "out_of_stock" && Date.now() - Date.parse(s.ts) < 3 * 86_400_000);
+  const cheapestKey = fresh.length
+    ? (() => {
+      const c = fresh.reduce((a, b) => (b.price_cents < a.price_cents ? b : a));
+      return `${c.product_link_id}|${c.seller}`;
+    })()
+    : null;
 
   const refresh = async () => {
     setRefreshing(true);
@@ -154,12 +164,6 @@ export function ItemView({ id }: { id: string }) {
         </dl>
       </div>
 
-      {item.best_url && (
-        <a class="btn primary block" href={item.best_url} target="_blank" rel="noopener noreferrer">
-          <IconExternal /> Avaa {item.best_seller ?? "kauppa"}
-        </a>
-      )}
-
       <section class="section" aria-labelledby="h-history">
         <div class="section-head">
           <h2 id="h-history">Hintahistoria</h2>
@@ -178,20 +182,46 @@ export function ItemView({ id }: { id: string }) {
             {orderedSeries.map((s) => {
               const key = `${s.product_link_id}|${s.seller}`;
               const color = colorOf.get(key);
+              const link = linkById.get(s.product_link_id);
+              const viaComparison = Boolean(s.seller);
+              const siteName = link?.shops?.name ?? s.domain;
               return (
                 <div class="series-row" role="row" key={key}>
                   <span class="swatch" style={{ background: color ? `var(${color})` : "var(--line)" }} aria-hidden="true" />
                   <div class="who" role="cell">
-                    <strong>{s.seller_name}</strong>
+                    <div class="who-name">
+                      <strong>{s.seller_name}</strong>
+                      {key === cheapestKey && <span class="chip good">Halvin nyt</span>}
+                    </div>
                     <span class="meta">
-                      {AVAILABILITY[s.availability]} · alin {eur(s.min_all)} · {ago(s.ts)}
-                      {s.seller ? ` · via ${s.domain}` : ""}
+                      {s.availability !== "unknown" ? `${AVAILABILITY[s.availability]} · ` : ""}alin {eur(s.min_all)} · {ago(s.ts)}
+                      {viaComparison ? ` · via ${s.domain}` : ""}
                     </span>
                   </div>
                   <div class="val" role="cell">
                     <strong class="num">{eur(s.price_cents)}</strong>
                     {s.lowest_30d_cents != null && (
                       <div class="meta num">ilmoitettu {eur(s.lowest_30d_cents)}</div>
+                    )}
+                  </div>
+                  <div class="series-actions">
+                    <a class="btn small" href={s.url} target="_blank" rel="noopener noreferrer">
+                      <IconExternal /> {viaComparison ? `Avaa ${siteName}` : `Avaa ${s.seller_name}`}
+                    </a>
+                    {viaComparison && (
+                      <a
+                        class="btn small"
+                        href={s.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => {
+                          // Open the comparison page (user taps the shop there) and wait for the link in the add view.
+                          setPendingDirectLink(id, s.seller);
+                          setTimeout(() => go(`#/add?item=${id}&seller=${encodeURIComponent(s.seller)}`), 300);
+                        }}
+                      >
+                        Lisää suora linkki
+                      </a>
                     )}
                   </div>
                 </div>

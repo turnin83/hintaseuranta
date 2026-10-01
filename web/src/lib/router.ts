@@ -1,4 +1,4 @@
-// Tiny hash router: #/ , #/item/<id>, #/deals, #/alerts, #/add?url=..&item=.., #/settings
+// Tiny hash router: #/ , #/item/<id>, #/deals, #/alerts, #/add?url=..&item=..&seller=.., #/settings
 import { signal } from "@preact/signals";
 
 export type Route =
@@ -6,7 +6,7 @@ export type Route =
   | { name: "item"; id: string }
   | { name: "deals" }
   | { name: "alerts" }
-  | { name: "add"; url: string | null; item: string | null }
+  | { name: "add"; url: string | null; item: string | null; seller: string | null }
   | { name: "settings" };
 
 function parse(hash: string): Route {
@@ -21,7 +21,7 @@ function parse(hash: string): Route {
     case "alerts":
       return { name: "alerts" };
     case "add":
-      return { name: "add", url: q.get("url"), item: q.get("item") };
+      return { name: "add", url: q.get("url"), item: q.get("item"), seller: q.get("seller") };
     case "settings":
       return { name: "settings" };
     default:

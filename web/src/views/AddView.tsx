@@ -8,17 +8,22 @@ import { TopBar } from "../components/chrome.tsx";
 import { IconClipboard } from "../components/icons.tsx";
 import { TagInput } from "../components/TagInput.tsx";
 import { findUrl } from "@shared/url.ts";
+import { clearPendingDirectLink, getPendingDirectLink, removeShopFromComparisonLinks } from "../lib/direct-links.ts";
 
 type ItemOpt = { id: string; name: string; eans: string[] };
 
-export function AddView(props: { url: string | null; item: string | null }) {
+export function AddView(props: { url: string | null; item: string | null; seller: string | null }) {
+  // A link shared/pasted after "Lisää suora linkki" goes to the item the user was working on.
+  const pending = props.item ? null : getPendingDirectLink();
+  const targetItem = props.item ?? pending?.item ?? null;
+  const directFor = props.seller ?? pending?.seller ?? null;
   const [url, setUrl] = useState(props.url ?? "");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<ItemOpt[]>([]);
-  const [mode, setMode] = useState<"new" | "existing">(props.item ? "existing" : "new");
-  const [itemId, setItemId] = useState(props.item ?? "");
+  const [mode, setMode] = useState<"new" | "existing">(targetItem ? "existing" : "new");
+  const [itemId, setItemId] = useState(targetItem ?? "");
   const [name, setName] = useState("");
   const [target, setTarget] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -108,7 +113,14 @@ export function AddView(props: { url: string | null; item: string | null }) {
         if (error.code === "23505") throw new Error("Tämä linkki on jo tällä toiveasialla.");
         throw error;
       }
-      toast("Tallennettu, haetaan ensimmäinen hinta…");
+      clearPendingDirectLink();
+      // A direct shop link replaces the same shop on the item's comparison-site links.
+      const removed = page.kind === "shop" && mode === "existing"
+        ? await removeShopFromComparisonLinks(wid, { domain: preview.domain, name: preview.shop.name })
+        : [];
+      toast(removed.length
+        ? `Tallennettu. ${removed.join(", ")} haetaan nyt suoraan kaupasta.`
+        : "Tallennettu, haetaan ensimmäinen hinta…");
       go(`#/item/${wid}`);
       invoke("fetch-prices", { link_ids: [link.id] })
         .then(() => {
@@ -126,7 +138,16 @@ export function AddView(props: { url: string | null; item: string | null }) {
   return (
     <div class="page stack-lg">
       <div class="stack">
-        <TopBar title="Lisää tuote" parent={props.item ? `#/item/${props.item}` : "#/"} />
+        <TopBar title={directFor ? `Suora linkki: ${directFor}` : "Lisää tuote"} parent={targetItem ? `#/item/${targetItem}` : "#/"} />
+        {directFor && !preview && (
+          <div class="notice">
+            Avaa vertailusivulta <strong>{directFor}</strong>, kopioi tuotesivun osoite ja liitä se tähän
+            (tai jaa sivu Hinnat-sovellukseen). Tallennuksen jälkeen {directFor} haetaan suoraan kaupasta.
+            <div class="actions" style="margin-top:8px">
+              <button type="button" class="btn ghost" onClick={() => { clearPendingDirectLink(); go(targetItem ? `#/item/${targetItem}` : "#/"); }}>Peru</button>
+            </div>
+          </div>
+        )}
         <form
           class="stack"
           onSubmit={(e) => {
