@@ -33,7 +33,7 @@ const TIME_BUDGET_MS = 110_000; // wall clock limit on the free plan is 150 s
 const MAX_LINKS = 150;
 const DOMAIN_CONCURRENCY = 4;
 const HISTORY_LIMIT = 1000;
-const FRESH_MS = 3 * 86_400_000; // an offer older than this is not a "current" price
+const FRESH_MS = 36 * 3_600_000; // an offer older than this is not a "current" price (same as v_wish_summary)
 
 type LinkRow = {
   id: string;

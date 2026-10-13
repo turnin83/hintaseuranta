@@ -116,8 +116,16 @@ export function ItemView({ id }: { id: string }) {
       sh.strategy !== "aggregator" && sellerMatchesShop(seller, sh) &&
       (sh.strategy === "blocked" || (!sh.last_ok_at && sh.last_probe != null && !sh.last_probe.source))
     );
+  // A price older than 36 h is not current (seller gone from the comparison page, shop page gives no price).
+  const isStale = (s: Series) => Date.now() - Date.parse(s.ts) > 36 * 3_600_000;
+  const staleReason = (s: Series) => {
+    const l = linkById.get(s.product_link_id);
+    if (s.seller) return `ei enää listalla: ${l?.shops?.name ?? s.domain}`;
+    return l?.last_status && l.last_status !== "ok" ? "kaupan sivu ei anna hintaa" : "ei päivittynyt";
+  };
+  const tableSeries = [...orderedSeries].sort((a, b) => Number(isStale(a)) - Number(isStale(b)));
   // Cheapest current offer (fresh, not out of stock) gets the "Halvin nyt" mark.
-  const fresh = orderedSeries.filter((s) => s.link_active && s.availability !== "out_of_stock" && Date.now() - Date.parse(s.ts) < 3 * 86_400_000);
+  const fresh = orderedSeries.filter((s) => s.link_active && s.availability !== "out_of_stock" && !isStale(s));
   const cheapestKey = fresh.length
     ? (() => {
       const c = fresh.reduce((a, b) => (b.price_cents < a.price_cents ? b : a));
@@ -192,24 +200,29 @@ export function ItemView({ id }: { id: string }) {
         )}
         {orderedSeries.length > 0 && (
           <div class="series" role="table" aria-label="Kauppakohtaiset hinnat">
-            {orderedSeries.map((s) => {
+            {tableSeries.map((s) => {
               const key = `${s.product_link_id}|${s.seller}`;
+              const stale = isStale(s);
               const color = colorOf.get(key);
               const link = linkById.get(s.product_link_id);
               const viaComparison = Boolean(s.seller);
               const siteName = link?.shops?.name ?? s.domain;
               return (
-                <div class="series-row" role="row" key={key}>
+                <div class={`series-row${stale ? " stale" : ""}`} role="row" key={key}>
                   <span class="swatch" style={{ background: color ? `var(${color})` : "var(--line)" }} aria-hidden="true" />
                   <div class="who" role="cell">
                     <div class="who-name">
                       <strong>{s.seller_name}</strong>
                       {key === cheapestKey && <span class="chip good">Halvin nyt</span>}
                     </div>
-                    <span class="meta">
-                      {s.availability !== "unknown" ? `${AVAILABILITY[s.availability]} · ` : ""}alin {eur(s.min_all)} · {ago(s.ts)}
-                      {viaComparison ? ` · via ${s.domain}` : ""}
-                    </span>
+                    {stale ? (
+                      <span class="meta">Vanha hinta ({ago(s.ts)}) · {staleReason(s)}</span>
+                    ) : (
+                      <span class="meta">
+                        {s.availability !== "unknown" ? `${AVAILABILITY[s.availability]} · ` : ""}alin {eur(s.min_all)} · {ago(s.ts)}
+                        {viaComparison ? ` · via ${s.domain}` : ""}
+                      </span>
+                    )}
                   </div>
                   <div class="val" role="cell">
                     <strong class="num">{eur(s.price_cents)}</strong>

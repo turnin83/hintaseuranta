@@ -451,3 +451,21 @@ details.panel > summary .summary-meta {
   margin-left: var(--sp-2); font-family: var(--font-body); font-size: 14px; font-weight: 400; color: var(--text-3);
 }
 .field.indent { padding-left: 34px; }
+
+/* ---------- Narrow screens / large text: never scroll sideways ---------- */
+html, body { overflow-x: clip; }
+.page, .page > *, .section, .stack > *, .stack-lg > *, .stack-sm > * { min-width: 0; }
+.tabbar { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.tab > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; padding: 0 2px; }
+.seg { max-width: 100%; flex-wrap: wrap; }
+.actions > * { max-width: 100%; }
+@media (max-width: 359px) {
+  .tab { font-size: 11px; }
+  .tab svg { width: 22px; height: 22px; }
+  .tab .count { left: calc(50% + 4px); }
+}
+
+/* Stale price rows (not updated for 36 h) */
+.series-row.stale .who strong, .series-row.stale .val strong { color: var(--text-3); font-weight: 500; }
+.series-row.stale .val strong { text-decoration: line-through; text-decoration-thickness: 1px; }
+.series-row.stale .swatch { opacity: 0.4; }
