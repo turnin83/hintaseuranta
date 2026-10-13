@@ -1,27 +1,28 @@
-// "Tarjoukset nyt": items whose best current price is clearly below our own history.
+// "Tarjoukset nyt": items whose best current price is clearly below their own usual price,
+// grouped by how big the discount is, with a buy recommendation where it is warranted.
 import { useEffect, useState } from "preact/hooks";
 import { supabase } from "../lib/supabase.ts";
 import type { WishSummary } from "../lib/types.ts";
-import { ago, eur, pctDelta, signedPct } from "../lib/format.ts";
+import { ago, eur } from "../lib/format.ts";
 import { dataVersion } from "../lib/store.ts";
+import { assessDeal, type DealAssessment, isDeal, type Tier, TIERS } from "../lib/deals.ts";
 import { TopBar } from "../components/chrome.tsx";
 import { IconArrowDown, IconCheck, IconExternal } from "../components/icons.tsx";
 
-const THRESHOLDS = [5, 10, 20] as const;
-const MIN_OBS_FOR_ATL = 6; // same default as the all-time-low alert rule
+type Filter = "all" | "20" | "40" | "buy";
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: "all", label: "Kaikki" },
+  { key: "20", label: "≥ 20 %" },
+  { key: "40", label: "≥ 40 %" },
+  { key: "buy", label: "Ostosuositukset" },
+];
 
-type Deal = {
-  item: WishSummary;
-  discountPct: number | null; // vs item 30 d median, positive = cheaper
-  targetHit: boolean;
-  allTimeLow: boolean;
-  score: number;
-};
+type Deal = { item: WishSummary; a: DealAssessment };
 
 export function DealsView() {
   const [items, setItems] = useState<WishSummary[] | null>(null);
   const [obsByItem, setObsByItem] = useState<Map<string, number>>(new Map());
-  const [min, setMin] = useState<(typeof THRESHOLDS)[number]>(5);
+  const [filter, setFilter] = useState<Filter>("all");
 
   useEffect(() => {
     Promise.all([
@@ -37,79 +38,98 @@ export function DealsView() {
     });
   }, [dataVersion.value]);
 
-  const deals: Deal[] = (items ?? [])
-    .filter((i) => i.best_price_cents != null && i.best_availability !== "out_of_stock")
-    .map((i) => {
-      const p = i.best_price_cents!;
-      const discountPct = i.median_30d_cents ? -pctDelta(p, i.median_30d_cents) : null;
-      const targetHit = i.target_price_cents != null && p <= i.target_price_cents;
-      const allTimeLow = i.min_all_cents != null && p <= i.min_all_cents && (obsByItem.get(i.id) ?? 0) >= MIN_OBS_FOR_ATL;
-      const score = (discountPct ?? 0) + (targetHit ? 5 : 0) + (allTimeLow ? 3 : 0);
-      return { item: i, discountPct, targetHit, allTimeLow, score };
-    })
-    .filter((d) => (d.discountPct ?? 0) >= min || d.targetHit || d.allTimeLow)
-    .sort((a, b) => b.score - a.score);
+  const all: Deal[] = (items ?? [])
+    .map((item) => ({ item, a: assessDeal(item, obsByItem.get(item.id) ?? 0) }))
+    .filter((d) => isDeal(d.a))
+    .sort((x, y) => y.a.score - x.a.score);
 
-  const withHistory = (items ?? []).filter((i) => i.median_30d_cents != null).length;
+  const shown = all.filter(({ a }) =>
+    filter === "all" ? true
+      : filter === "buy" ? a.recommendation === "buy"
+      : (a.discountPct ?? 0) >= Number(filter)
+  );
+  const buyCount = all.filter((d) => d.a.recommendation === "buy").length;
+
+  // Sections by tier; target / all-time-low hits without a % discount go last.
+  const sections: { key: Tier | "other"; heading: string; deals: Deal[] }[] = [
+    ...TIERS.map((t) => ({ key: t.tier, heading: t.heading, deals: shown.filter((d) => d.a.tier === t.tier) })),
+    { key: "other" as const, heading: "Tavoitehinnassa tai historian alimmillaan", deals: shown.filter((d) => d.a.tier == null) },
+  ].filter((s) => s.deals.length > 0);
 
   return (
     <div class="page stack">
       <TopBar title="Tarjoukset nyt" />
       <div class="stack-sm">
-        <p class="muted">Paras hinta nyt verrattuna omaan 30 päivän historiaan. Mukana vain saatavilla olevat.</p>
-        <div class="seg" role="group" aria-label="Vähimmäisale">
-          {THRESHOLDS.map((t) => (
-            <button key={t} aria-pressed={min === t} onClick={() => setMin(t)}>≥ {t} %</button>
+        <p class="muted">
+          Paras saatavilla oleva hinta verrattuna tuotteen tavalliseen hintaan (30 päivän mediaani).
+          {buyCount > 0 && <> <strong>{buyCount} {buyCount === 1 ? "ostosuositus" : "ostosuositusta"}.</strong></>}
+        </p>
+        <div class="seg" role="group" aria-label="Suodata">
+          {FILTERS.map((f) => (
+            <button key={f.key} aria-pressed={filter === f.key} onClick={() => setFilter(f.key)}>{f.label}</button>
           ))}
         </div>
       </div>
 
       {items === null && <div class="skeleton" />}
 
-      {items && deals.length === 0 && (
+      {items && shown.length === 0 && (
         <div class="empty">
-          <h2>Ei selviä tarjouksia juuri nyt</h2>
+          <h2>{all.length === 0 ? "Ei tarjouksia juuri nyt" : "Ei tällä rajauksella"}</h2>
           <p>
-            {withHistory < (items?.length ?? 0)
-              ? "Osalla tuotteista historiaa on vielä vähän. Vertailu paranee, kun hintoja on kerätty muutaman päivän."
-              : `Mikään hinta ei ole nyt vähintään ${min} % alle 30 päivän mediaanin, tavoitteen alla tai kaikkien aikojen alin.`}
+            {all.length === 0
+              ? "Mikään hinta ei ole nyt selvästi tavallista alempi, tavoitteen alla tai historian alimmillaan. Vertailu tarkentuu, kun hintoja kertyy useammalta päivältä."
+              : "Valitse laajempi rajaus nähdäksesi pienemmät alennukset."}
           </p>
         </div>
       )}
 
-      <div class="list">
-        {deals.map((d) => <DealCard key={d.item.id} deal={d} />)}
-      </div>
+      {sections.map((s) => (
+        <section class="stack-sm" key={s.key} aria-label={s.heading}>
+          <h2 class="deal-heading">{s.heading}</h2>
+          <div class="list">
+            {s.deals.map((d) => <DealCard key={d.item.id} deal={d} />)}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
 
-function DealCard({ deal: d }: { deal: Deal }) {
-  const i = d.item;
+function DealCard({ deal: { item: i, a } }: { deal: Deal }) {
+  const tierLabel = TIERS.find((t) => t.tier === a.tier)?.label;
   return (
-    <div class="card deal-card">
+    <div class={`card deal-card tier-${a.tier ?? "none"}`}>
       <a class="deal-main" href={`#/item/${i.id}`}>
         <div class="head">
           <span class="name">{i.name}</span>
-          {d.discountPct != null && d.discountPct > 0 && (
-            <span class="deal-pct num" aria-label={`${d.discountPct} prosenttia alle mediaanin`}>
-              <IconArrowDown width={16} height={16} />{signedPct(-d.discountPct)}
+          {a.discountPct != null && a.discountPct >= 5 && (
+            <span class="deal-pct num" aria-label={`${a.discountPct} prosenttia alle tavallisen hinnan`}>
+              <IconArrowDown width={18} height={18} />−{a.discountPct} %
             </span>
           )}
         </div>
         <div class="price-row">
           <span class="price num">{eur(i.best_price_cents!)}</span>
+          {i.median_30d_cents != null && a.discountPct != null && a.discountPct >= 5 && (
+            <s class="was num">{eur(i.median_30d_cents)}</s>
+          )}
           <span class="muted">{i.best_seller}</span>
         </div>
-        <div class="actions meta">
-          {i.median_30d_cents != null && <span class="num">30 pv mediaani {eur(i.median_30d_cents)}</span>}
-          {d.targetHit && <span class="chip good"><IconCheck /> Tavoite {eur(i.target_price_cents!)} alittui</span>}
-          {d.allTimeLow && <span class="chip good">Alin koskaan</span>}
-          <span>päivitetty {ago(i.best_ts)}</span>
-        </div>
+        {a.recommendation && (
+          <p class={`reco reco-${a.recommendation}`}>
+            {a.recommendation === "buy" ? <IconCheck width={18} height={18} /> : null}
+            <strong>{a.recommendation === "buy" ? (a.tier === "must" ? "Pakko ostaa" : "Ostosuositus") : "Harkitse"}:</strong>{" "}
+            {a.reasons.join(", ")}
+          </p>
+        )}
+        {!a.recommendation && a.reasons.length > 0 && <p class="meta">{tierLabel ? `${tierLabel}: ` : ""}{a.reasons.join(", ")}</p>}
+        <p class="meta">
+          {a.lowConfidence ? "Vähän hintahistoriaa, arvio on suuntaa antava · " : ""}päivitetty {ago(i.best_ts)}
+        </p>
       </a>
       {i.best_url && (
-        <a class="btn deal-shop" href={i.best_url} target="_blank" rel="noopener noreferrer">
+        <a class={`btn deal-shop${a.recommendation === "buy" ? " primary" : ""}`} href={i.best_url} target="_blank" rel="noopener noreferrer">
           <IconExternal /> Avaa {i.best_seller ?? "kauppa"}
         </a>
       )}

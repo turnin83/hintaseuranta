@@ -10,6 +10,7 @@ import { IconExternal, IconPlus, IconRefresh } from "../components/icons.tsx";
 import { TagInput } from "../components/TagInput.tsx";
 import { FindOffers } from "../components/FindOffers.tsx";
 import { setPendingDirectLink } from "../lib/direct-links.ts";
+import { assessDeal } from "../lib/deals.ts";
 import { sellerMatchesShop } from "@shared/search.ts";
 import type { Shop } from "../lib/types.ts";
 import { diffRules, mergeRules, RULE_LABELS, type RuleName, type Rules } from "@shared/rules.ts";
@@ -107,6 +108,7 @@ export function ItemView({ id }: { id: string }) {
 
   const eans = [...new Set(links.map((l) => l.ean).filter(Boolean))];
   const activeLinks = links.filter((l) => l.active);
+  const deal = assessDeal(item, series.reduce((n, s) => n + s.obs_count, 0));
   const failingLinks = activeLinks.filter((l) => l.last_status && l.last_status !== "ok").length;
   const colorOf = new Map(chartSeries.map((s) => [s.key, s.colorVar]));
   const linkById = new Map(links.map((l) => [l.id, l]));
@@ -163,6 +165,12 @@ export function ItemView({ id }: { id: string }) {
               <span class="muted">
                 {item.best_seller} · {AVAILABILITY[item.best_availability ?? "unknown"]} · {ago(item.best_ts)}
               </span>
+              {deal.recommendation && (
+                <p class={`reco reco-${deal.recommendation}`} style="margin-top:6px">
+                  <strong>{deal.recommendation === "buy" ? (deal.tier === "must" ? "Pakko ostaa" : "Ostosuositus") : "Harkitse"}:</strong>{" "}
+                  {deal.reasons.join(", ")}{deal.lowConfidence ? " (vähän historiaa)" : ""}
+                </p>
+              )}
             </>
           ) : (
             <span class="muted">{links.length ? "Ei hintatietoa vielä." : "Lisää ensimmäinen linkki, niin hinnan seuranta alkaa."}</span>

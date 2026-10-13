@@ -469,3 +469,17 @@ html, body { overflow-x: clip; }
 .series-row.stale .who strong, .series-row.stale .val strong { color: var(--text-3); font-weight: 500; }
 .series-row.stale .val strong { text-decoration: line-through; text-decoration-thickness: 1px; }
 .series-row.stale .swatch { opacity: 0.4; }
+
+/* ---------- Deal tiers & recommendations ---------- */
+.deal-heading { font-size: 17px; margin-top: var(--sp-2); }
+.price-row .was { color: var(--text-3); font-size: 16px; text-decoration-thickness: 1px; }
+.reco { font-size: 15px; line-height: 1.4; }
+.reco svg { display: inline-block; vertical-align: -3px; margin-right: 4px; }
+.reco-buy { color: var(--accent); }
+.reco-buy strong { color: var(--accent); }
+.reco-consider strong { color: var(--text); }
+.deal-card.tier-must { background: var(--accent-soft); border-color: var(--accent); }
+.deal-card.tier-must .deal-pct { background: var(--accent); color: var(--accent-ink); font-size: 26px; padding: 4px 12px; }
+.deal-card.tier-must .price { font-size: 34px; }
+.deal-card.tier-excellent .deal-pct { background: var(--accent); color: var(--accent-ink); }
+.deal-card.tier-small .deal-pct { font-size: 16px; background: var(--surface-2); color: var(--accent); }
