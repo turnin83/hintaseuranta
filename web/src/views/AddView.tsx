@@ -8,6 +8,7 @@ import { TopBar } from "../components/chrome.tsx";
 import { IconClipboard } from "../components/icons.tsx";
 import { TagInput } from "../components/TagInput.tsx";
 import { findUrl } from "@shared/url.ts";
+import type { SearchHit } from "@shared/search.ts";
 import { clearPendingDirectLink, getPendingDirectLink, removeShopFromComparisonLinks } from "../lib/direct-links.ts";
 
 type ItemOpt = { id: string; name: string; eans: string[] };
@@ -35,7 +36,7 @@ export function AddView(props: { url: string | null; item: string | null; seller
       const opts = (data ?? []).map((w: { id: string; name: string; product_links: { ean: string | null }[] }) => ({
         id: w.id,
         name: w.name,
-        eans: [...new Set(w.product_links.map((l) => l.ean).filter((e): e is string => Boolean(e)))],
+        eans: [...new Set((w.product_links ?? []).map((l) => l.ean).filter((e): e is string => Boolean(e)))],
       }));
       setItems(opts);
       if (!itemId && opts[0]) setItemId(opts[0].id);
@@ -44,7 +45,26 @@ export function AddView(props: { url: string | null; item: string | null; seller
     if (props.url) runPreview(props.url);
   }, []);
 
+  const [results, setResults] = useState<SearchHit[] | null>(null);
+
+  /** Text without a URL = search words: list hinta.fi products to pick from. */
+  async function runSearch(q: string) {
+    setLoading(true);
+    setError(null);
+    setPreview(null);
+    setResults(null);
+    try {
+      const r = await invoke<{ results: SearchHit[] }>("preview-product", { query: q });
+      setResults(r.results);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function runPreview(raw: string) {
+    setResults(null);
     const u = findUrl(raw) ?? raw.trim();
     if (!u) return;
     setUrl(u);
@@ -151,23 +171,24 @@ export function AddView(props: { url: string | null; item: string | null; seller
           class="stack"
           onSubmit={(e) => {
             e.preventDefault();
-            runPreview(url);
+            if (findUrl(url)) runPreview(url);
+            else runSearch(url);
           }}
         >
           <label class="field">
-            <span>Tuotesivun linkki</span>
+            <span>Tuotesivun linkki tai hakusana</span>
             <input
-              type="url"
-              inputMode="url"
+              type="text"
+              enterKeyHint="search"
               autoComplete="off"
-              placeholder="https://…"
+              placeholder="https://… tai esim. Sage Super Q"
               value={url}
               onInput={(e) => setUrl((e.target as HTMLInputElement).value)}
             />
-            <span class="hint">Mikä tahansa verkkokauppa, tai hintaopas.fi / hinta.fi, jos kauppa estää haut. Voit myös jakaa linkin tähän sovellukseen puhelimen jakovalikosta.</span>
+            <span class="hint">Linkki mistä tahansa verkkokaupasta, tai hakusana, jolloin tuote haetaan hinta.fi:stä kaikkien kauppojen hintoineen. Voit myös jakaa linkin tähän sovellukseen puhelimen jakovalikosta.</span>
           </label>
           <div class="actions">
-            <button class={`btn${preview ? "" : " primary"}`} disabled={loading || !url.trim()}>{loading ? "Haetaan…" : "Hae tiedot"}</button>
+            <button class={`btn${preview ? "" : " primary"}`} disabled={loading || !url.trim()}>{loading ? "Haetaan…" : findUrl(url) || !url.trim() ? "Hae tiedot" : "Hae"}</button>
             {"clipboard" in navigator && (
               <button type="button" class="btn" onClick={paste}><IconClipboard /> Liitä</button>
             )}
@@ -176,6 +197,23 @@ export function AddView(props: { url: string | null; item: string | null; seller
       </div>
 
       {error && <div class="notice bad">{error}</div>}
+
+      {results && (
+        <section class="stack-sm" aria-label="Hakutulokset">
+          {results.length === 0
+            ? <p class="muted">Ei osumia hinta.fi:ssä. Kokeile eri hakusanaa tai liitä tuotesivun linkki.</p>
+            : <p class="meta">{results.length} osumaa hinta.fi:stä. Valitse oikea tuote:</p>}
+          {results.map((r) => (
+            <button key={r.id} class="hit" disabled={loading} onClick={() => runPreview(r.url)}>
+              <strong>{r.name}</strong>
+              <span class="meta">
+                {[r.group, r.priceCents != null ? `alk. ${eur(r.priceCents)}` : null, r.storeCount != null ? `${r.storeCount} kauppaa` : null]
+                  .filter(Boolean).join(" · ")}
+              </span>
+            </button>
+          ))}
+        </section>
+      )}
 
       {preview && (
         <section class="stack" aria-label="Esikatselu">

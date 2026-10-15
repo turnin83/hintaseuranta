@@ -507,3 +507,14 @@ html, body { overflow-x: clip; }
 /* ---------- Purchased ---------- */
 .card.purchased { background: var(--accent-soft); border-color: transparent; }
 .saved-total { color: var(--accent); font-weight: 600; }
+
+/* ---------- Sparkline ---------- */
+.spark { flex: none; margin-left: auto; align-self: center; }
+.spark polyline { stroke: var(--text-3); }
+.spark circle { fill: var(--text-3); }
+.spark-down polyline { stroke: var(--accent); }
+.spark-down circle { fill: var(--accent); }
+.spark-up polyline { stroke: var(--bad); }
+.spark-up circle { fill: var(--bad); }
+.item-card .price-row { flex-wrap: nowrap; }
+.item-card .price-row .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

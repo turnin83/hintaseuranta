@@ -13,7 +13,7 @@ import { setPendingDirectLink } from "../lib/direct-links.ts";
 import { assessDeal } from "../lib/deals.ts";
 import { sellerMatchesShop } from "@shared/search.ts";
 import type { Shop } from "../lib/types.ts";
-import { diffRules, mergeRules, RULE_LABELS, type RuleName, type Rules } from "@shared/rules.ts";
+import { AFTER_PURCHASE_DAYS, diffRules, mergeRules, RULE_LABELS, type RuleName, type Rules } from "@shared/rules.ts";
 import { RulesForm, rulesSummary } from "../components/RulesForm.tsx";
 
 const RANGES = [
@@ -402,6 +402,12 @@ function EditPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }
   const [priority, setPriority] = useState(item.priority);
   const [notes, setNotes] = useState(item.notes ?? "");
   const [active, setActive] = useState(item.active);
+  // Target price suggestions from history (whole euros): the lowest seen, and 15 % under the usual price.
+  const suggestions = [
+    item.min_all_cents != null ? { label: "Alin hinta", cents: Math.floor(item.min_all_cents / 100) * 100 } : null,
+    item.median_30d_cents != null ? { label: "Mediaani −15 %", cents: Math.floor((item.median_30d_cents * 0.85) / 100) * 100 } : null,
+  ].filter((x): x is { label: string; cents: number } => x != null && x.cents > 0)
+    .filter((x, i, a) => a.findIndex((y) => y.cents === x.cents) === i);
   const [busy, setBusy] = useState(false);
 
   const save = async (e: Event) => {
@@ -451,6 +457,15 @@ function EditPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }
             </select>
           </label>
         </div>
+        {suggestions.length > 0 && (
+          <div class="tag-list" aria-label="Tavoitehinnan ehdotukset">
+            {suggestions.map((sg) => (
+              <button type="button" class="tag-pick" key={sg.label} onClick={() => setTarget(centsToInput(sg.cents))}>
+                {sg.label}: {eur(sg.cents)}
+              </button>
+            ))}
+          </div>
+        )}
         <div class="field">
           <label for="edit-tags"><span>Tagit</span></label>
           <TagInput id="edit-tags" value={tags} onChange={setTags} />
@@ -542,6 +557,7 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
     const saved = item.purchased_ref_cents != null && item.purchased_price_cents != null
       ? item.purchased_ref_cents - item.purchased_price_cents
       : null;
+    const watchDays = Math.max(0, AFTER_PURCHASE_DAYS - Math.floor((Date.now() - Date.parse(item.purchased_at)) / 86_400_000));
     const undo = async () => {
       if (!confirm("Perutaanko ostomerkintä? Seuranta jatkuu.")) return;
       const { error } = await supabase.from("wish_items").update({
@@ -556,7 +572,14 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
         {saved != null && saved > 0 && (
           <p class="reco reco-buy">Säästit {eur(saved)} tavalliseen hintaan ({eur(item.purchased_ref_cents!)}) verrattuna.</p>
         )}
-        <p class="meta">Hintoja ei enää haeta eikä hälytyksiä tule. Historia säilyy.</p>
+        {watchDays > 0 ? (
+          <p class="meta">Hintaa seurataan vielä {watchDays} pv. Jos se laskee alle ostohinnan, saat ilmoituksen (palautusoikeus tai hintatakuu).</p>
+        ) : (
+          <p class="meta">Hintoja ei enää haeta eikä hälytyksiä tule. Historia säilyy.</p>
+        )}
+        {item.best_price_cents != null && item.purchased_price_cents != null && item.best_price_cents < item.purchased_price_cents && (
+          <p class="reco reco-buy"><strong>Hinta on nyt {eur(item.best_price_cents)}</strong> ({item.best_seller}), {eur(item.purchased_price_cents - item.best_price_cents)} vähemmän kuin maksoit.</p>
+        )}
         <div class="actions"><button class="btn ghost" onClick={undo}>Peru ostos</button></div>
       </div>
     );
@@ -600,7 +623,7 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
       <label class="field"><span>Kauppa</span>
         <input value={seller} onInput={(e) => setSeller((e.target as HTMLInputElement).value)} />
       </label>
-      <p class="meta">Seuranta ja hälytykset loppuvat. Säästö lasketaan tuotteen tavalliseen hintaan (30 pv mediaani){item.median_30d_cents ? `: ${eur(item.median_30d_cents)}` : ""}.</p>
+      <p class="meta">Normaalit hälytykset loppuvat. Hintaa seurataan vielä {AFTER_PURCHASE_DAYS} pv, ja jos se laskee alle ostohinnan, saat ilmoituksen. Säästö lasketaan tuotteen tavalliseen hintaan (30 pv mediaani){item.median_30d_cents ? `: ${eur(item.median_30d_cents)}` : ""}.</p>
       <div class="actions">
         <button class="btn primary" disabled={busy}>Tallenna</button>
         <button type="button" class="btn ghost" onClick={() => setOpen(false)}>Peru</button>

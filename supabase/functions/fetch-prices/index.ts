@@ -19,6 +19,7 @@ import {
   type AlertCandidate,
   dailyMinMedian,
   describeAlert,
+  evaluateAfterPurchase,
   evaluateItemRules,
   evaluateSeriesRules,
   mergeRules,
@@ -47,9 +48,18 @@ type LinkRow = {
   model_name: string | null;
   sellers: string[] | null;
   fail_count: number;
+  failing_since: string | null;
 };
 type ShopRow = { id: number; domain: string; name: string | null; strategy: string; min_delay_ms: number };
-type ItemRow = { id: string; household_id: string; name: string; target_price_cents: number | null; rules: unknown };
+type ItemRow = {
+  id: string;
+  household_id: string;
+  name: string;
+  target_price_cents: number | null;
+  rules: unknown;
+  purchased_at: string | null;
+  purchased_price_cents: number | null;
+};
 type SeriesRow = {
   product_link_id: string;
   seller: string;
@@ -133,7 +143,7 @@ Deno.serve(async (req) => {
 
   const [shops, items, households] = await Promise.all([
     admin.from("shops").select("id, domain, name, strategy, min_delay_ms").in("id", [...new Set(links.map((l) => l.shop_id))]),
-    admin.from("wish_items").select("id, household_id, name, target_price_cents, rules").in("id", [...new Set(links.map((l) => l.wish_item_id))]),
+    admin.from("wish_items").select("id, household_id, name, target_price_cents, rules, purchased_at, purchased_price_cents").in("id", [...new Set(links.map((l) => l.wish_item_id))]),
     admin.from("households").select(HOUSEHOLD_COLS).in("id", [...new Set(links.map((l) => l.household_id))]),
   ]);
   const shopById = new Map((shops.data as ShopRow[] ?? []).map((s) => [s.id, s]));
@@ -249,7 +259,7 @@ async function raiseAlert(
   item: ItemRow,
   rules: Rules,
   c: AlertCandidate,
-  at: { linkId: string; seller: string; sellerName: string; userId: string | null; itemWide: boolean },
+  at: { linkId: string; seller: string; sellerName: string; userId: string | null; itemWide: boolean; cooldownHours?: number },
 ) {
   let prevQ = admin.from("alert_events").select("ts, price_cents").eq("rule", c.rule);
   prevQ = at.itemWide
@@ -257,7 +267,7 @@ async function raiseAlert(
     : prevQ.eq("product_link_id", at.linkId).eq("seller", at.seller);
   const { data: prev } = await prevQ.order("ts", { ascending: false }).limit(1).maybeSingle();
   const prevAlert = prev ? { ts: Date.parse(prev.ts), priceCents: prev.price_cents } : undefined;
-  if (!passesCooldown(c, prevAlert, Date.now(), rules.cooldown_hours)) return;
+  if (!passesCooldown(c, prevAlert, Date.now(), at.cooldownHours ?? rules.cooldown_hours)) return;
 
   const message = describeAlert(c);
   const { data: ins, error } = await admin.from("alert_events").insert({
@@ -292,14 +302,27 @@ async function processLink(
   const fail = async (status: "error" | "blocked" | "no_data", error: string) => {
     ctx.fail++;
     ctx.errors.push({ url: link.url, error });
+    const failingSince = link.failing_since ?? now;
     await admin.from("product_links").update({
       last_fetched_at: now,
       last_status: status,
       last_error: error.slice(0, 500),
       fail_count: link.fail_count + 1,
+      failing_since: failingSince,
       claimed_until: null,
     }).eq("id", link.id);
     await admin.from("shops").update({ last_error: `${status}: ${error}`.slice(0, 500) }).eq("id", shop.id);
+    // Broken for over a day: one alert per link per week (not for purchased items).
+    if (!item.purchased_at && Date.now() - Date.parse(failingSince) > 24 * 3_600_000) {
+      await raiseAlert(admin, ctx, item, rules, { rule: "link_broken", level: "alert", priceCents: 0, refCents: null }, {
+        linkId: link.id,
+        seller: "",
+        sellerName: shop.name || shop.domain,
+        userId: link.user_id,
+        itemWide: false,
+        cooldownHours: 7 * 24,
+      });
+    }
     return false;
   };
 
@@ -336,9 +359,9 @@ async function processLink(
   if (insErr) throw insErr;
 
   // Other shops' current offers (for "only when this shop is the cheapest").
-  const offersNow = await currentOffers(admin, item.id);
+  const offersNow = item.purchased_at ? [] : await currentOffers(admin, item.id);
 
-  for (const row of rows) {
+  for (const row of item.purchased_at ? [] : rows) {
     const { data: hist, error } = await admin
       .from("price_observations")
       .select("ts, price_cents, availability, lowest_30d_cents")
@@ -368,6 +391,7 @@ async function processLink(
     last_status: "ok",
     last_error: null,
     fail_count: 0,
+    failing_since: null,
     claimed_until: null,
     ...(link.ean == null && page.ean ? { ean: page.ean } : {}),
     ...(link.model_name == null && page.name ? { model_name: page.name.slice(0, 200) } : {}),
@@ -381,6 +405,21 @@ async function evaluateItem(admin: SupabaseClient, item: ItemRow, rules: Rules, 
   const offers = await currentOffers(admin, item.id);
   if (offers.length === 0) return;
   const best = offers.reduce((a, b) => (b.price_cents < a.price_cents ? b : a));
+
+  if (item.purchased_at) {
+    const c = evaluateAfterPurchase(best.price_cents, item.purchased_price_cents);
+    if (c) {
+      await raiseAlert(admin, ctx, item, rules, c, {
+        linkId: best.product_link_id,
+        seller: best.seller,
+        sellerName: best.seller_name,
+        userId: null,
+        itemWide: true,
+        cooldownHours: 72,
+      });
+    }
+    return;
+  }
 
   const { data: linkRows } = await admin.from("product_links").select("id").eq("wish_item_id", item.id);
   const linkIds = (linkRows ?? []).map((l) => l.id as string);

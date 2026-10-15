@@ -6,6 +6,7 @@ import { countTags, hasTag } from "../lib/tags.ts";
 import { session } from "../lib/store.ts";
 import { TopBar } from "../components/chrome.tsx";
 import { CampaignBadge } from "../components/CampaignBadge.tsx";
+import { Sparkline } from "../components/Sparkline.tsx";
 import { IconAlert, IconArrowDown, IconArrowUp, IconCheck, IconPlus } from "../components/icons.tsx";
 
 type Mode = "list" | "groups";
@@ -40,6 +41,7 @@ export function ListView() {
   const [tag, setTag] = usePref<string>("list-tag", "");
   const [density, setDensity] = usePref<Density>("list-density", "cards");
   const [query, setQuery] = useState("");
+  const [trend, setTrend] = useState<Map<string, number[]>>(new Map());
 
   useEffect(() => {
     supabase
@@ -51,6 +53,13 @@ export function ListView() {
         if (error) setError(error.message);
         else setItems(data as WishSummary[]);
       });
+    supabase.from("v_item_daily").select("wish_item_id, day, min_cents").order("day").then(({ data }) => {
+      const m = new Map<string, number[]>();
+      for (const r of (data ?? []) as { wish_item_id: string; min_cents: number }[]) {
+        m.set(r.wish_item_id, [...(m.get(r.wish_item_id) ?? []), r.min_cents]);
+      }
+      setTrend(m);
+    });
   }, []);
 
   const base = (items ?? []).filter((i) => !i.purchased_at && (showInactive || i.active));
@@ -145,8 +154,8 @@ export function ListView() {
       )}
 
       {visible.length > 0 && (mode === "groups" && hasTags
-        ? <Groups items={visible} order={tagCounts.map((t) => t.tag)} density={density} />
-        : <Items items={visible} density={density} />)}
+        ? <Groups items={visible} order={tagCounts.map((t) => t.tag)} density={density} trend={trend} />
+        : <Items items={visible} density={density} trend={trend} />)}
 
       {inactiveCount > 0 && (
         <button class="btn ghost" onClick={() => setShowInactive(!showInactive)}>
@@ -192,10 +201,10 @@ export function savingsOf(i: WishSummary): number | null {
 }
 
 /** One collapsible section per tag (most used first); an item with several tags appears in each. */
-function Items({ items, density }: { items: WishSummary[]; density: Density }) {
+function Items({ items, density, trend }: { items: WishSummary[]; density: Density; trend: Map<string, number[]> }) {
   return density === "compact"
     ? <div class="rows">{items.map((i) => <CompactRow key={i.id} item={i} />)}</div>
-    : <div class="list">{items.map((i) => <ItemCard key={i.id} item={i} />)}</div>;
+    : <div class="list">{items.map((i) => <ItemCard key={i.id} item={i} trend={trend.get(i.id) ?? []} />)}</div>;
 }
 
 /** Compact two-level row: name on top, price · change · shop underneath. */
@@ -227,7 +236,7 @@ function CompactRow({ item: i }: { item: WishSummary }) {
   );
 }
 
-function Groups({ items, order, density }: { items: WishSummary[]; order: string[]; density: Density }) {
+function Groups({ items, order, density, trend }: { items: WishSummary[]; order: string[]; density: Density; trend: Map<string, number[]> }) {
   const groups = order
     .map((tag) => ({ tag, items: items.filter((i) => hasTag(i.tags, tag)) }))
     .filter((g) => g.items.length > 0);
@@ -245,7 +254,7 @@ function Groups({ items, order, density }: { items: WishSummary[]; order: string
               <span class="meta">{g.items.length} {g.items.length === 1 ? "tuote" : "tuotetta"}</span>
               {unread > 0 && <span class="chip good">{unread} uutta</span>}
             </summary>
-            <Items items={g.items} density={density} />
+            <Items items={g.items} density={density} trend={trend} />
           </details>
         );
       })}
@@ -253,7 +262,7 @@ function Groups({ items, order, density }: { items: WishSummary[]; order: string
   );
 }
 
-function ItemCard({ item: i }: { item: WishSummary }) {
+function ItemCard({ item: i, trend }: { item: WishSummary; trend: number[] }) {
   const delta = i.best_price_cents != null && i.median_30d_cents ? pctDelta(i.best_price_cents, i.median_30d_cents) : null;
   const targetHit = i.best_price_cents != null && i.target_price_cents != null && i.best_price_cents <= i.target_price_cents;
 
@@ -268,6 +277,7 @@ function ItemCard({ item: i }: { item: WishSummary }) {
         <div class="price-row">
           <span class="price num">{eur(i.best_price_cents)}</span>
           <span class="muted">{i.best_seller}</span>
+          <Sparkline values={trend} />
           {i.best_availability === "out_of_stock" && <span class="chip neutral">{AVAILABILITY.out_of_stock}</span>}
         </div>
       ) : (

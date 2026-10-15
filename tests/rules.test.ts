@@ -10,6 +10,7 @@ import {
   median,
   mergeRules,
   passesCooldown,
+  evaluateAfterPurchase,
   type ItemState,
   type Obs,
 } from "../supabase/functions/_shared/rules.ts";
@@ -142,4 +143,12 @@ test("describe", () => {
   const text = describeAlert({ rule: "drop", level: "alert", priceCents: 99900, refCents: 129900 });
   assert.equal(text.replaceAll(nb, " "), "999 €, laski 23 % (oli 1 299 €)");
   assert.ok(text.includes(`1${nb}299${nb}€`));
+});
+
+test("price drop after purchase: clear drop only", () => {
+  assert.deepEqual(evaluateAfterPurchase(29900, 34900), { rule: "price_after_purchase", level: "alert", priceCents: 29900, refCents: 34900 });
+  assert.equal(evaluateAfterPurchase(34850, 34900), null); // 0,50 € is noise
+  assert.equal(evaluateAfterPurchase(1950, 1990), null); // 2 % but < 1 €
+  assert.equal(evaluateAfterPurchase(34900, 34900), null);
+  assert.equal(evaluateAfterPurchase(null, 34900), null);
 });

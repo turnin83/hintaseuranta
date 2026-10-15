@@ -1,10 +1,12 @@
 // preview-product: POST {url} (signed-in user) -> name, price(s), EAN and shop diagnostics for the add view.
+//                  POST {query} -> hinta.fi product search results (pick one, then preview its url).
 // Also registers the shop domain for the household (or refreshes its probe data).
 import { adminClient, CORS, json, userFromRequest } from "../_shared/http.ts";
 import { createRobotsCache, fetchPage } from "../_shared/fetcher.ts";
 import { extractPage } from "../_shared/extract.ts";
 import { enrichPage } from "../_shared/enrich.ts";
 import { domainOf, findUrl, normalizeUrl } from "../_shared/url.ts";
+import { hintaFiSearchUrl, parseHintaFiSearch } from "../_shared/search.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -18,7 +20,13 @@ Deno.serve(async (req) => {
   if (!member) return json({ error: "Käyttäjä ei kuulu kotitalouteen" }, 403);
   const householdId = member.household_id as string;
 
-  const body = await req.json().catch(() => ({})) as { url?: string };
+  const body = await req.json().catch(() => ({})) as { url?: string; query?: string };
+
+  if (body.query && !findUrl(body.query)) {
+    const s = await fetchPage(hintaFiSearchUrl(body.query), createRobotsCache(), 15_000);
+    if (s.error) return json({ error: `Haku epäonnistui: ${s.error}` }, 502);
+    return json({ query: body.query.trim(), results: parseHintaFiSearch(s.html).slice(0, 15) });
+  }
   let url: string;
   try {
     url = normalizeUrl(findUrl(body.url) ?? body.url ?? "");

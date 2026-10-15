@@ -1,19 +1,33 @@
-# Free Supabase projects are paused after ~7 days without activity. pg_cron runs inside the
-# database and may not count as activity, so make one cheap external API request per day.
-# Requires repository secrets SUPABASE_URL and SUPABASE_ANON_KEY (public key, RLS applies).
-name: Supabase keepalive
+# Keepalive + health watchdog.
+# - Free Supabase projects are paused after ~7 days without activity; this makes one API request a day.
+# - If the project does not answer, or no link has been fetched successfully for 26 h, the job fails and
+#   GitHub e-mails the repository owner (Settings -> Notifications -> Actions: failed workflows).
+# Requires repository secrets SUPABASE_URL and SUPABASE_ANON_KEY (public key; health() returns only
+# timestamps and counts).
+name: Supabase keepalive & health
 on:
   schedule:
     - cron: "23 5 * * *"
+    - cron: "23 17 * * *"
   workflow_dispatch:
 jobs:
-  ping:
+  health:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping REST API
+      - name: Check collection health
+        env:
+          URL: ${{ secrets.SUPABASE_URL }}
+          KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          code=$(curl -s -o /dev/null -w "%{http_code}" \
-            "${{ secrets.SUPABASE_URL }}/rest/v1/shops?select=id&limit=1" \
-            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}")
-          echo "HTTP $code"
-          test "$code" = "200"
+          body=$(curl -sS -m 30 -X POST "$URL/rest/v1/rpc/health" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{}') || {
+            echo "::error::Supabase did not answer (paused or down?)"; exit 1; }
+          echo "health: $body"
+          last=$(echo "$body" | jq -r '.last_ok_fetch // empty')
+          broken=$(echo "$body" | jq -r '.broken_links // 0')
+          if [ -z "$last" ]; then echo "::error::Unexpected response (project paused?)"; exit 1; fi
+          age_h=$(( ( $(date +%s) - $(date -d "$last" +%s) ) / 3600 ))
+          echo "last successful fetch ${age_h} h ago, broken links: ${broken}"
+          if [ "$age_h" -gt 26 ]; then
+            echo "::error::No successful price fetch for ${age_h} h - check Supabase (cron, functions, pause)"; exit 1
+          fi

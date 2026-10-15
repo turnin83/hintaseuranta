@@ -35,6 +35,8 @@ Kauppoja ei ole kovakoodattu. Kun liität minkä tahansa tuotesivun, `preview-pr
 - **Suoraan (JSON-LD)**: useimmat kaupat (testattu: Verkkokauppa.com, Power, Veikon Kone).
 - **Adapteri**: vain kun JSON-LD ei riitä. Nyt: `verkkokauppa.com` (kampanjan vertailuhinta),
   `hintaopas.fi` (kauppakohtaiset tarjoukset Next.js-datasta). Lisää uusi `_shared/adapters.ts`:n `ADAPTERS`-rekisteriin + fixture-testi.
+- **Hakusana lisäysnäkymässä**: kirjoita linkin sijaan esim. "Sage Super Q", valitse tuote hinta.fi:n
+  tuloksista ja valitse kaupat kuten vertailusivun linkillä.
 - **Etsi muista kaupoista** (toiveasian detalji): hakee hinta.fi:stä saman tuotteen EAN-koodilla
   (tai nimellä, jolloin valitaan oikea osuma) ja näyttää kaupat, joita ei vielä seurata. Valitut kaupat
   tallentuvat yhdellä hinta.fi-linkillä. hintaopas.fi:n haku on robots.txt:ssä kielletty, joten sitä ei käytetä.
@@ -176,6 +178,20 @@ vaan ne merkitään siirretyiksi (`push_deferred`) ja lähetetään aamulla yhte
 Tuotesivu → **Merkitse ostetuksi** (hinta, kauppa, päivä): seuranta ja hälytykset loppuvat (`active = false`),
 historia säilyy. Säästö = tuotteen tavallinen hinta (30 pv mediaani ostohetkellä) − ostohinta. Toivelistan
 lopussa *Ostetut (n) · säästit X €*. *Peru ostos* palauttaa seurannan.
+
+## Hinta laski ostoksen jälkeen
+
+Ostettua tuotetta haetaan vielä 30 päivää hiljaa. Muita hälytyksiä ei tule, mutta jos paras hinta laskee
+selvästi ostohintaa alemmaksi (vähintään 2 % ja 1 €), tulee ilmoitus palautusoikeuden tai hintatakuun
+käyttämistä varten (toisto aikaisintaan 72 h välein tai kun hinta laskee lisää).
+
+## Keruun terveysvahti
+
+- **Rikkinäinen linkki**: linkki, joka ei ole antanut hintaa yli vuorokauteen (`product_links.failing_since`),
+  tekee yhden hälytyksen *Linkki ei toimi* (toisto aikaisintaan viikon päästä).
+- **Keruu pysähtynyt**: Supabase ei voi hälyttää itse, jos projekti on pausella. GitHub Actions
+  (`keepalive.yml`, 2×/pv) kutsuu `rpc/health` ja epäonnistuu, jos projekti ei vastaa tai onnistunutta hakua
+  ei ole ollut 26 tuntiin. GitHub lähettää epäonnistuneesta ajastetusta ajosta sähköpostin.
 
 ## Toimituskulut
 

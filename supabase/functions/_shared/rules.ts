@@ -14,7 +14,9 @@ export type RuleName =
   | "below_median"
   | "drop"
   | "back_in_stock"
-  | "suspicious_discount";
+  | "suspicious_discount"
+  | "price_after_purchase"
+  | "link_broken";
 
 export const ITEM_RULES: RuleName[] = ["below_target", "all_time_low", "below_median"];
 
@@ -201,6 +203,20 @@ export function evaluateSeriesRules(args: {
   return out;
 }
 
+/** Days a purchased item is still watched for a price drop (return right / price guarantee). */
+export const AFTER_PURCHASE_DAYS = 30;
+
+/**
+ * Purchased item: alert when the best current price is clearly below what was paid
+ * (at least 2 % and 1 €, so cent-level noise does not trigger it).
+ */
+export function evaluateAfterPurchase(bestCents: number | null, paidCents: number | null): AlertCandidate | null {
+  if (bestCents == null || paidCents == null) return null;
+  const diff = paidCents - bestCents;
+  if (diff < 100 || bestCents > paidCents * 0.98) return null;
+  return { rule: "price_after_purchase", level: "alert", priceCents: bestCents, refCents: paidCents };
+}
+
 /** Cooldown: the same rule fires again only if the price fell further or the cooldown has passed. */
 export function passesCooldown(c: AlertCandidate, prev: PrevAlert | undefined, now: number, cooldownHours: number) {
   if (!prev) return true;
@@ -233,6 +249,10 @@ export function describeAlert(c: AlertCandidate): string {
       return `Taas saatavilla, ${p}`;
     case "suspicious_discount":
       return `Kauppa ilmoittaa alennuksen, mutta hinta oli 30 pv sisällä jo ${r}`;
+    case "price_after_purchase":
+      return `Hinta laski ostoksen jälkeen: nyt ${p}, ostit ${r}. Tarkista palautusoikeus tai hintatakuu (${eur(c.refCents! - c.priceCents)}).`;
+    case "link_broken":
+      return "Linkki ei ole antanut hintaa yli vuorokauteen";
   }
 }
 
@@ -243,4 +263,6 @@ export const RULE_LABELS: Record<RuleName, string> = {
   drop: "Hinnanpudotus",
   back_in_stock: "Palasi varastoon",
   suspicious_discount: "Epäilyttävä tarjous",
+  price_after_purchase: "Hinta laski ostoksen jälkeen",
+  link_broken: "Linkki ei toimi",
 };
