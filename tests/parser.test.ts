@@ -8,6 +8,7 @@ import { detectBotMarkers, isBlocked } from "../supabase/functions/_shared/botch
 import { normalizeUrl, domainOf, findUrl } from "../supabase/functions/_shared/url.ts";
 import { parseRobots, robotsAllows } from "../supabase/functions/_shared/robots.ts";
 import { parseHintaFiSearch, sellerMatchesShop } from "../supabase/functions/_shared/search.ts";
+import { powerReferenceCents } from "../supabase/functions/_shared/enrich.ts";
 
 const fixture = (name: string) =>
   gunzipSync(readFileSync(new URL(`./fixtures/${name}.html.gz`, import.meta.url))).toString("utf8");
@@ -28,6 +29,7 @@ test("verkkokauppa: JSON-LD product + adapter", () => {
     currency: "EUR",
     availability: "in_stock",
     lowest30dCents: null, // not in campaign
+    shippingCents: 1499, // from JSON-LD shippingDetails
   });
 });
 
@@ -63,10 +65,10 @@ test("hintaopas: per-shop offers from flight data", () => {
   assert.equal(p.offers.length, 6);
 });
 
-test("hinta.fi: per-seller offers straight from JSON-LD", () => {
+test("hinta.fi: per-seller offers from JSON-LD (+ offer table)", () => {
   const p = extractPage(fixture("hintafi-rtx5090"), "https://hinta.fi/5133428/asus-rog-astral-rtx5090-o32g-gaming")!;
   assert.equal(p.kind, "aggregator");
-  assert.equal(p.source, "jsonld");
+  assert.match(p.source, /^(jsonld|adapter:hintafi)$/);
   const g = p.offers.find((o) => o.seller === "Gigantti");
   assert.ok(g);
   assert.equal(g.priceCents, 559990);
@@ -167,4 +169,35 @@ test("seller matches tracked shop", () => {
   assert.ok(sellerMatchesShop("CS MEGASTORE", shop("csmegastore.fi")));
   assert.ok(!sellerMatchesShop("Proshop", shop("power.fi")));
   assert.ok(!sellerMatchesShop("CDON", shop("hintaopas.fi", "Hintaopas")));
+});
+
+test("hinta.fi: offer table adds delivery fee and availability", () => {
+  const p = extractPage(fixture("hintafi-tcl65c8k-offers"), "https://hinta.fi/5238122/tcl-c8k-65c8k")!;
+  assert.equal(p.source, "adapter:hintafi");
+  const g = p.offers.find((o) => o.seller === "Gigantti")!;
+  assert.equal(g.priceCents, 249900);
+  assert.equal(g.shippingCents, 4490);
+  assert.equal(g.availability, "in_stock");
+});
+
+test("hintaopas: delivery fee per shop", () => {
+  const p = extractPage(fixture("hintaopas-tcl65c8k"), "https://hintaopas.fi/product.php?p=14547508")!;
+  const g = p.offers.find((o) => o.seller === "Gigantti")!;
+  assert.equal(g.shippingCents, 4490);
+});
+
+test("JSON-LD shippingDetails", () => {
+  const html = `<script type="application/ld+json">{"@type":"Product","name":"X","offers":{"@type":"Offer","price":"99.90","priceCurrency":"EUR",
+    "shippingDetails":[{"@type":"OfferShippingDetails","shippingRate":{"@type":"MonetaryAmount","value":"5.90","currency":"EUR"}},
+                       {"@type":"OfferShippingDetails","shippingRate":{"@type":"MonetaryAmount","value":0,"currency":"EUR"}}]}}</script>`;
+  assert.equal(extractPage(html, "https://example.fi/p")!.offers[0].shippingCents, 0);
+});
+
+test("Power API: campaign comparison price", () => {
+  const [p] = JSON.parse(readFileSync(new URL("./fixtures/power-api-campaign.json", import.meta.url), "utf8"));
+  const during = Date.parse("2026-10-10T12:00:00+03:00");
+  const after = Date.parse("2026-10-20T12:00:00+03:00");
+  assert.equal(powerReferenceCents(p, during), 54900);
+  assert.equal(powerReferenceCents(p, after), null); // campaign over
+  assert.equal(powerReferenceCents({ price: 549, minimumPreviousPriceInfo: { minimumPrice: 549 } }, during), null); // not higher
 });

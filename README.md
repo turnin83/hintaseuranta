@@ -158,10 +158,41 @@ Välilehti listaa tuotteet, joiden paras saatavilla oleva hinta on vähintään 
 Järjestys: suurin alennus ensin, tavoitteen alitus ja alin koskaan nostavat. Vertailu tehdään omaan
 historiaan, ei kaupan ilmoittamaan "ennen"-hintaan.
 
+## Kampanjat (Black Friday ym.)
+
+Asetukset → **Kampanjat**: kampanjan aikana hinnat haetaan tiheämmin (oletus tunnin välein), muulloin
+käytetään normaalia hakutiheyttä. Valmiina: Singles Day 10.–11.11., Black Week 20.–30.11. ja Joulualet
+26.12.–6.1. Kampanjoita voi lisätä, poistaa ja kytkeä pois. Käynnissä olevasta kampanjasta näkyy pieni merkki
+Toivelistan ja Tarjousten yläosassa. Tehokas väli = lyhin kotitalouden asetuksesta ja käynnissä olevista
+kampanjoista (`effective_interval_minutes`).
+
+## Hiljaiset tunnit
+
+Asetukset → **Hiljaiset tunnit** (oletus 23–07, Europe/Helsinki): yöllä syntyneitä hälytyksiä ei pushata,
+vaan ne merkitään siirretyiksi (`push_deferred`) ja lähetetään aamulla yhtenä koosteena. Hinnat haetaan silti.
+
+## Ostettu ja säästö
+
+Tuotesivu → **Merkitse ostetuksi** (hinta, kauppa, päivä): seuranta ja hälytykset loppuvat (`active = false`),
+historia säilyy. Säästö = tuotteen tavallinen hinta (30 pv mediaani ostohetkellä) − ostohinta. Toivelistan
+lopussa *Ostetut (n) · säästit X €*. *Peru ostos* palauttaa seurannan.
+
+## Toimituskulut
+
+Sivutietona hintojen alla (*toimitettuna X €* / *ilmainen toimitus*), ei vaikuta vertailuun eikä hälytyksiin.
+Lähteet: hintaopas.fi (tarjousrivien toimitustavat), hinta.fi (tarjoustaulukon `data-delivery-fee`) ja
+kauppojen schema.org `shippingDetails` (esim. Verkkokauppa.com, Power).
+
+## Vertailuhinta ("epäilyttävä tarjous")
+
+Kaupan ilmoittama "alin hinta 30 pv ennen kampanjaa" luetaan: Verkkokauppa.com (sivun tila), hintaopas.fi
+(`originalPrice`) ja Power (julkinen tuote-API `/api/v2/products?ids=`, `minimumPreviousPriceInfo`, vain
+kampanjan aikana).
+
 ## Black Friday -viikko
 
-Asetukset → Hakutiheys → **Tunnin välein**. Cron-lauseketta ei tarvitse muuttaa: 15 minuutin tick
-hakee vain erääntyneet linkit (`user_settings.fetch_interval_minutes`). Palauta BF:n jälkeen 2×/pv.
+Black Week -kampanja nostaa hakutiheyden automaattisesti tunnin välein 20.–30.11. (ks. Kampanjat).
+Cron-lauseketta ei tarvitse muuttaa: 15 minuutin tick hakee vain erääntyneet linkit.
 
 Tarkista viikkoa ennen: Asetukset → *Viimeisimmät haut* ja *Kaupat* (virheet, estot).
 

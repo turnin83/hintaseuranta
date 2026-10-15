@@ -483,3 +483,27 @@ html, body { overflow-x: clip; }
 .deal-card.tier-must .price { font-size: 34px; }
 .deal-card.tier-excellent .deal-pct { background: var(--accent); color: var(--accent-ink); }
 .deal-card.tier-small .deal-pct { font-size: 16px; background: var(--surface-2); color: var(--accent); }
+
+/* ---------- Campaign pill: quiet, one shimmer sweep on load ---------- */
+.campaign-badge {
+  position: relative; overflow: hidden; align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+  padding: 6px 12px; border-radius: var(--r-field);
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap; text-overflow: ellipsis;
+}
+.campaign-spark {
+  width: 8px; height: 8px; flex: none; border-radius: 2px; background: var(--accent); transform: rotate(45deg);
+}
+.campaign-badge::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--accent) 35%, transparent) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: campaign-sweep 1.6s var(--ease) 0.4s 1 forwards;
+}
+@keyframes campaign-sweep { to { transform: translateX(100%); } }
+.campaign-row input[type="checkbox"] { margin-left: 6px; }
+
+/* ---------- Purchased ---------- */
+.card.purchased { background: var(--accent-soft); border-color: transparent; }
+.saved-total { color: var(--accent); font-weight: 600; }

@@ -10,8 +10,13 @@ export type WishSummary = {
   notes: string | null;
   rules: unknown;
   created_at: string;
+  purchased_at: string | null;
+  purchased_price_cents: number | null;
+  purchased_seller: string | null;
+  purchased_ref_cents: number | null; // usual (30 d median) price when bought
   best_seller: string | null;
   best_price_cents: number | null;
+  best_shipping_cents: number | null;
   best_url: string | null;
   best_availability: Availability | null;
   best_ts: string | null;
@@ -64,6 +69,7 @@ export type Series = {
   ts: string;
   availability: Availability;
   lowest_30d_cents: number | null;
+  shipping_cents: number | null;
   min_all: number;
   min_30d: number | null;
   median_30d: number | null;

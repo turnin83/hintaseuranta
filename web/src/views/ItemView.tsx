@@ -193,6 +193,8 @@ export function ItemView({ id }: { id: string }) {
         </dl>
       </div>
 
+      <PurchasePanel item={item} onSaved={reload} />
+
       <section class="section" aria-labelledby="h-history">
         <div class="section-head">
           <h2 id="h-history">Hintahistoria</h2>
@@ -234,6 +236,9 @@ export function ItemView({ id }: { id: string }) {
                   </div>
                   <div class="val" role="cell">
                     <strong class="num">{eur(s.price_cents)}</strong>
+                    {s.shipping_cents != null && (
+                      <div class="meta num">{s.shipping_cents === 0 ? "ilmainen toimitus" : `toimitettuna ${eur(s.price_cents + s.shipping_cents)}`}</div>
+                    )}
                     {s.lowest_30d_cents != null && (
                       <div class="meta num">ilmoitettu {eur(s.lowest_30d_cents)}</div>
                     )}
@@ -523,5 +528,83 @@ function RulesPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void 
         )}
       </div>
     </details>
+  );
+}
+
+function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [price, setPrice] = useState(centsToInput(item.best_price_cents));
+  const [seller, setSeller] = useState(item.best_seller ?? "");
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [busy, setBusy] = useState(false);
+
+  if (item.purchased_at) {
+    const saved = item.purchased_ref_cents != null && item.purchased_price_cents != null
+      ? item.purchased_ref_cents - item.purchased_price_cents
+      : null;
+    const undo = async () => {
+      if (!confirm("Perutaanko ostomerkintä? Seuranta jatkuu.")) return;
+      const { error } = await supabase.from("wish_items").update({
+        purchased_at: null, purchased_price_cents: null, purchased_seller: null, purchased_ref_cents: null, active: true,
+      }).eq("id", item.id);
+      if (error) toast(error.message);
+      else { toast("Seuranta jatkuu"); onSaved(); }
+    };
+    return (
+      <div class="card purchased stack-sm">
+        <strong>Ostettu {new Date(item.purchased_at).toLocaleDateString("fi-FI")}: {eur(item.purchased_price_cents!)}{item.purchased_seller ? `, ${item.purchased_seller}` : ""}</strong>
+        {saved != null && saved > 0 && (
+          <p class="reco reco-buy">Säästit {eur(saved)} tavalliseen hintaan ({eur(item.purchased_ref_cents!)}) verrattuna.</p>
+        )}
+        <p class="meta">Hintoja ei enää haeta eikä hälytyksiä tule. Historia säilyy.</p>
+        <div class="actions"><button class="btn ghost" onClick={undo}>Peru ostos</button></div>
+      </div>
+    );
+  }
+
+  if (!open) {
+    return <button class="btn" style="align-self:flex-start" onClick={() => setOpen(true)}>Merkitse ostetuksi</button>;
+  }
+
+  const save = async (e: Event) => {
+    e.preventDefault();
+    const cents = parseEurInput(price);
+    if (cents == null) return toast("Hinta ei ole kelvollinen luku");
+    setBusy(true);
+    const { error } = await supabase.from("wish_items").update({
+      purchased_at: new Date(`${date}T12:00:00`).toISOString(),
+      purchased_price_cents: cents,
+      purchased_seller: seller.trim() || null,
+      purchased_ref_cents: item.median_30d_cents, // the usual price right now
+      active: false,
+    }).eq("id", item.id);
+    setBusy(false);
+    if (error) toast(error.message);
+    else {
+      toast(item.median_30d_cents && item.median_30d_cents > cents ? `Ostettu! Säästit ${eur(item.median_30d_cents - cents)}.` : "Merkitty ostetuksi");
+      onSaved();
+    }
+  };
+
+  return (
+    <form class="card stack" onSubmit={save}>
+      <h3>Merkitse ostetuksi</h3>
+      <div class="row">
+        <label class="field"><span>Hinta (€)</span>
+          <input inputMode="decimal" required value={price} onInput={(e) => setPrice((e.target as HTMLInputElement).value)} />
+        </label>
+        <label class="field"><span>Päivä</span>
+          <input type="date" required value={date} onInput={(e) => setDate((e.target as HTMLInputElement).value)} />
+        </label>
+      </div>
+      <label class="field"><span>Kauppa</span>
+        <input value={seller} onInput={(e) => setSeller((e.target as HTMLInputElement).value)} />
+      </label>
+      <p class="meta">Seuranta ja hälytykset loppuvat. Säästö lasketaan tuotteen tavalliseen hintaan (30 pv mediaani){item.median_30d_cents ? `: ${eur(item.median_30d_cents)}` : ""}.</p>
+      <div class="actions">
+        <button class="btn primary" disabled={busy}>Tallenna</button>
+        <button type="button" class="btn ghost" onClick={() => setOpen(false)}>Peru</button>
+      </div>
+    </form>
   );
 }

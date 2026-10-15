@@ -3,6 +3,7 @@ import { route } from "./lib/router.ts";
 import { refreshUnread, session } from "./lib/store.ts";
 import { configMissing } from "./lib/supabase.ts";
 import { updateReady } from "./lib/version.ts";
+import { refreshCampaigns } from "./lib/campaigns.ts";
 import { TabBar, Toast } from "./components/chrome.tsx";
 import { ListView } from "./views/ListView.tsx";
 import { ItemView } from "./views/ItemView.tsx";
@@ -18,6 +19,7 @@ export function App() {
   useEffect(() => {
     if (!s) return;
     refreshUnread();
+    refreshCampaigns();
     const onVisible = () => document.visibilityState === "visible" && refreshUnread();
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);

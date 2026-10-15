@@ -15,6 +15,8 @@ export type Offer = {
   availability: Availability;
   // Shop-reported comparison price ("alin hinta 30 pv" / original price in a campaign)
   lowest30dCents: number | null;
+  // Cheapest delivery fee when the source tells it (0 = free delivery); side info, not part of the price
+  shippingCents?: number | null;
 };
 
 export type PageData = {

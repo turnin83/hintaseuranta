@@ -116,7 +116,19 @@ function offerFrom(offer: Node, withSeller: boolean): Offer {
     currency: str(offer["priceCurrency"] ?? spec["priceCurrency"]),
     availability: normalizeAvailability(offer["availability"]),
     lowest30dCents: null,
+    shippingCents: shippingFrom(offer),
   };
+}
+
+/** schema.org OfferShippingDetails -> cheapest shippingRate in cents (null when not given). */
+function shippingFrom(offer: Node): number | null {
+  const details = offer["shippingDetails"];
+  const list = (Array.isArray(details) ? details : details ? [details] : []) as Node[];
+  const rates = list
+    .map((d) => first(d["shippingRate"] as Node | Node[]))
+    .map((r) => (r ? parsePrice(r["value"] ?? r["price"]) : null))
+    .filter((v): v is number => v != null && v >= 0);
+  return rates.length ? toCents(Math.min(...rates)) : null;
 }
 
 /**

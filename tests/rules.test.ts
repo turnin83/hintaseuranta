@@ -138,5 +138,8 @@ test("cooldown: again only if cheaper or 24 h passed", () => {
 });
 
 test("describe", () => {
-  assert.equal(describeAlert({ rule: "drop", level: "alert", priceCents: 99900, refCents: 129900 }), "999 €, laski 23 % (oli 1 299 €)");
+  const nb = String.fromCharCode(0xa0); // amounts use non-breaking spaces so they never wrap
+  const text = describeAlert({ rule: "drop", level: "alert", priceCents: 99900, refCents: 129900 });
+  assert.equal(text.replaceAll(nb, " "), "999 €, laski 23 % (oli 1 299 €)");
+  assert.ok(text.includes(`1${nb}299${nb}€`));
 });

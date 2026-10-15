@@ -5,8 +5,9 @@ import { ago, dateTime } from "../lib/format.ts";
 import { dataVersion, session, toast } from "../lib/store.ts";
 import { currentSubscription, disablePush, enablePush, platform } from "../lib/push.ts";
 import { TopBar } from "../components/chrome.tsx";
-import { IconShare } from "../components/icons.tsx";
+import { IconShare, IconTrash } from "../components/icons.tsx";
 import { versionLabel } from "../lib/version.ts";
+import { type Campaign, fiDate, intervalLabel, isRunning, refreshCampaigns, today } from "../lib/campaigns.ts";
 import { RulesForm, rulesSummary } from "../components/RulesForm.tsx";
 import { DEFAULT_RULES, diffRules, mergeRules, type Rules } from "@shared/rules.ts";
 
@@ -14,7 +15,7 @@ const INTERVALS = [
   { min: 720, label: "2 kertaa päivässä", hint: "Oletus" },
   { min: 360, label: "4 kertaa päivässä", hint: "" },
   { min: 180, label: "8 kertaa päivässä", hint: "" },
-  { min: 60, label: "Tunnin välein", hint: "Black Friday -viikko" },
+  { min: 60, label: "Tunnin välein", hint: "" },
 ];
 
 export function SettingsView() {
@@ -22,9 +23,11 @@ export function SettingsView() {
     <div class="page stack-lg">
       <TopBar title="Asetukset" />
       <NotificationsSection />
+      <QuietHoursSection />
       <AlertRulesSection />
       <HouseholdSection />
       <IntervalSection />
+      <CampaignsSection />
       <ShopsSection />
       <RunsSection />
       <section class="section">
@@ -110,6 +113,46 @@ function NotificationsSection() {
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+const HOURS = Array.from({ length: 24 }, (_, h) => h);
+
+function QuietHoursSection() {
+  const [h, setH] = useState<{ id: string; quiet_enabled: boolean; quiet_start: number; quiet_end: number } | null>(null);
+  useEffect(() => {
+    supabase.from("households").select("id, quiet_enabled, quiet_start, quiet_end").maybeSingle().then(({ data }) => setH(data));
+  }, []);
+  if (!h) return null;
+  const save = async (patch: Partial<typeof h>) => {
+    const next = { ...h, ...patch };
+    setH(next);
+    const { error } = await supabase.from("households").update(patch).eq("id", h.id);
+    toast(error ? error.message : "Hiljaiset tunnit tallennettu");
+  };
+  return (
+    <section class="section" aria-labelledby="h-quiet">
+      <h2 id="h-quiet">Hiljaiset tunnit</h2>
+      <label class="check">
+        <input type="checkbox" checked={h.quiet_enabled} onChange={(e) => save({ quiet_enabled: (e.target as HTMLInputElement).checked })} />
+        Ei ilmoituksia yöllä
+      </label>
+      {h.quiet_enabled && (
+        <div class="row">
+          <label class="field"><span>Alkaa</span>
+            <select value={h.quiet_start} onChange={(e) => save({ quiet_start: Number((e.target as HTMLSelectElement).value) })}>
+              {HOURS.map((x) => <option value={x}>{String(x).padStart(2, "0")}.00</option>)}
+            </select>
+          </label>
+          <label class="field"><span>Päättyy</span>
+            <select value={h.quiet_end} onChange={(e) => save({ quiet_end: Number((e.target as HTMLSelectElement).value) })}>
+              {HOURS.map((x) => <option value={x}>{String(x).padStart(2, "0")}.00</option>)}
+            </select>
+          </label>
+        </div>
+      )}
+      <p class="meta">Hiljaisina tunteina syntyneet hälytykset tulevat aamulla yhtenä ilmoituksena. Hinnat haetaan silti normaalisti.</p>
     </section>
   );
 }
@@ -227,7 +270,7 @@ function IntervalSection() {
           </label>
         ))}
       </fieldset>
-      <p class="meta">Ajastus tarkistaa 15 minuutin välein, onko jokin linkki erääntynyt. Kukin kauppa haetaan peräkkäin viiveellä.</p>
+      <p class="meta">Kampanjoiden aikana hinnat haetaan tiheämmin (ks. Kampanjat alla). Ajastus tarkistaa 15 minuutin välein, onko jokin linkki erääntynyt.</p>
       <button class="btn" disabled={busy} onClick={fetchAll}>{busy ? "Haetaan…" : "Hae kaikki nyt"}</button>
     </section>
   );
@@ -315,6 +358,89 @@ function RunsSection() {
           </details>
         ))}
       </div>
+    </section>
+  );
+}
+
+const CAMPAIGN_INTERVALS = [60, 120, 180, 360];
+
+function CampaignsSection() {
+  const [list, setList] = useState<Campaign[]>([]);
+  const [name, setName] = useState("");
+  const [start, setStart] = useState(today());
+  const [end, setEnd] = useState(today());
+  const [intervalMin, setIntervalMin] = useState(60);
+  const load = () => refreshCampaigns().then(setList);
+  useEffect(() => {
+    load();
+  }, []);
+
+  const update = async (id: number, patch: Partial<Campaign>) => {
+    const { error } = await supabase.from("campaigns").update(patch).eq("id", id);
+    if (error) toast(error.message);
+    load();
+  };
+  const remove = async (c: Campaign) => {
+    if (!confirm(`Poistetaanko kampanja "${c.name}"?`)) return;
+    const { error } = await supabase.from("campaigns").delete().eq("id", c.id);
+    if (error) toast(error.message);
+    load();
+  };
+  const add = async (e: Event) => {
+    e.preventDefault();
+    if (end < start) return toast("Päättymispäivä on ennen alkua");
+    const { error } = await supabase.from("campaigns").insert({ name: name.trim(), starts_on: start, ends_on: end, fetch_interval_minutes: intervalMin });
+    if (error) return toast(error.message);
+    setName("");
+    toast("Kampanja lisätty");
+    load();
+  };
+
+  const upcoming = list.filter((c) => c.ends_on >= today());
+  const past = list.length - upcoming.length;
+  return (
+    <section class="section" aria-labelledby="h-campaigns">
+      <h2 id="h-campaigns">Kampanjat</h2>
+      <p class="muted">Kampanjan aikana hinnat haetaan tiheämmin. Muulloin käytetään yllä valittua hakutiheyttä.</p>
+      <div class="rows">
+        {upcoming.length === 0 && <div class="row-item"><span class="row-main muted">Ei tulevia kampanjoita</span></div>}
+        {upcoming.map((c) => (
+          <div class="row-item campaign-row" key={c.id}>
+            <input type="checkbox" checked={c.active} aria-label={`${c.name} käytössä`}
+              onChange={(e) => update(c.id, { active: (e.target as HTMLInputElement).checked })} />
+            <span class="row-main">
+              <span class="row-name">{c.name}{isRunning(c) && <span class="chip good" style="margin-left:8px">käynnissä</span>}</span>
+              <span class="row-sub">{fiDate(c.starts_on)}–{fiDate(c.ends_on)} · {intervalLabel(c.fetch_interval_minutes)}</span>
+            </span>
+            <button class="icon-btn" aria-label={`Poista ${c.name}`} onClick={() => remove(c)}>
+              <IconTrash />
+            </button>
+          </div>
+        ))}
+      </div>
+      {past > 0 && <p class="meta">{past} päättynyttä kampanjaa piilotettu.</p>}
+      <details class="panel">
+        <summary>Lisää kampanja</summary>
+        <form class="stack" onSubmit={add}>
+          <label class="field"><span>Nimi</span>
+            <input required maxLength={60} value={name} placeholder="esim. Cyber Monday" onInput={(e) => setName((e.target as HTMLInputElement).value)} />
+          </label>
+          <div class="row">
+            <label class="field"><span>Alkaa</span>
+              <input type="date" required value={start} onInput={(e) => setStart((e.target as HTMLInputElement).value)} />
+            </label>
+            <label class="field"><span>Päättyy</span>
+              <input type="date" required value={end} onInput={(e) => setEnd((e.target as HTMLInputElement).value)} />
+            </label>
+          </div>
+          <label class="field"><span>Hakutiheys kampanjan aikana</span>
+            <select value={intervalMin} onChange={(e) => setIntervalMin(Number((e.target as HTMLSelectElement).value))}>
+              {CAMPAIGN_INTERVALS.map((m) => <option value={m}>{intervalLabel(m)}</option>)}
+            </select>
+          </label>
+          <button class="btn primary" disabled={!name.trim()}>Lisää</button>
+        </form>
+      </details>
     </section>
   );
 }

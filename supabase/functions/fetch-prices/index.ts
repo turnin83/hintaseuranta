@@ -28,6 +28,7 @@ import {
 } from "../_shared/rules.ts";
 import type { Availability } from "../_shared/types.ts";
 import { pushToHousehold } from "../_shared/push.ts";
+import { enrichPage } from "../_shared/enrich.ts";
 
 const TIME_BUDGET_MS = 110_000; // wall clock limit on the free plan is 150 s
 const MAX_LINKS = 150;
@@ -60,6 +61,25 @@ type SeriesRow = {
 
 type PendingAlert = { id: number; itemId: string; itemName: string; seller: string; message: string };
 type Ctx = { ok: number; fail: number; alerts: PendingAlert[]; errors: { url: string; error: string }[] };
+type HouseholdRow = {
+  id: string;
+  default_rules: unknown;
+  quiet_enabled: boolean;
+  quiet_start: number;
+  quiet_end: number;
+  timezone: string;
+};
+const HOUSEHOLD_COLS = "id, default_rules, quiet_enabled, quiet_start, quiet_end, timezone";
+
+/** Quiet hours in the household's time zone (start inclusive, end exclusive; may wrap midnight). */
+function inQuietHours(h: HouseholdRow | undefined, at = new Date()): boolean {
+  if (!h?.quiet_enabled || h.quiet_start === h.quiet_end) return false;
+  const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hourCycle: "h23", timeZone: h.timezone }).format(at));
+  return h.quiet_start < h.quiet_end
+    ? hour >= h.quiet_start && hour < h.quiet_end
+    : hour >= h.quiet_start || hour < h.quiet_end;
+}
+
 type ObsRow = { ts: string; price_cents: number; availability: string; lowest_30d_cents: number | null };
 
 const toObs = (r: ObsRow): Obs => ({
@@ -105,17 +125,21 @@ Deno.serve(async (req) => {
     }
   }
 
-  if (links.length === 0) return json({ trigger, links: 0 });
+  if (links.length === 0) {
+    // Nothing to fetch, but a quiet-hours summary may be waiting.
+    const digests = trigger === "cron" ? await deliverDeferredOnly(admin) : 0;
+    return json({ trigger, links: 0, digests });
+  }
 
   const [shops, items, households] = await Promise.all([
     admin.from("shops").select("id, domain, name, strategy, min_delay_ms").in("id", [...new Set(links.map((l) => l.shop_id))]),
     admin.from("wish_items").select("id, household_id, name, target_price_cents, rules").in("id", [...new Set(links.map((l) => l.wish_item_id))]),
-    admin.from("households").select("id, default_rules").in("id", [...new Set(links.map((l) => l.household_id))]),
+    admin.from("households").select(HOUSEHOLD_COLS).in("id", [...new Set(links.map((l) => l.household_id))]),
   ]);
   const shopById = new Map((shops.data as ShopRow[] ?? []).map((s) => [s.id, s]));
   const itemById = new Map((items.data as ItemRow[] ?? []).map((i) => [i.id, i]));
-  const householdRules = new Map((households.data ?? []).map((h) => [h.id as string, h.default_rules as unknown]));
-  const rulesFor = (item: ItemRow): Rules => mergeRules(householdRules.get(item.household_id), item.rules);
+  const householdById = new Map(((households.data ?? []) as HouseholdRow[]).map((h) => [h.id, h]));
+  const rulesFor = (item: ItemRow): Rules => mergeRules(householdById.get(item.household_id)?.default_rules, item.rules);
 
   // Results are collected per household (shared data, shared pushes, one run log each).
   const ctxByHousehold = new Map<string, Ctx>();
@@ -182,18 +206,12 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Push + run log per household.
+  // Push (or defer during quiet hours) + run log per household.
   for (const [householdId, ctx] of ctxByHousehold) {
-    if (ctx.alerts.length) {
-      try {
-        const res = await sendAlertPushes(admin, householdId, ctx.alerts);
-        if (res.sent > 0) {
-          await admin.from("alert_events").update({ push_sent: true }).in("id", ctx.alerts.map((a) => a.id));
-        }
-        if (res.errors.length) ctx.errors.push(...res.errors.map((e) => ({ url: "push", error: e })));
-      } catch (e) {
-        ctx.errors.push({ url: "push", error: String(e) });
-      }
+    try {
+      await deliverPushes(admin, householdById.get(householdId), householdId, ctx.alerts, ctx);
+    } catch (e) {
+      ctx.errors.push({ url: "push", error: String(e) });
     }
     await admin.from("fetch_runs").insert({
       household_id: householdId,
@@ -289,7 +307,8 @@ async function processLink(
   if (f.blocked) return fail("blocked", `Bot protection: ${f.botMarkers.join(", ")}`);
   if (f.error) return fail("error", f.error);
 
-  const page = extractPage(f.html, link.url);
+  const parsed = extractPage(f.html, link.url);
+  const page = parsed ? await enrichPage(parsed, link.url) : null;
   if (!page || page.offers.length === 0) return fail("no_data", "No price found (no Product JSON-LD / adapter data)");
 
   let offers = page.offers;
@@ -310,6 +329,7 @@ async function processLink(
     currency: o.currency ?? "EUR",
     availability: o.availability,
     lowest_30d_cents: o.lowest30dCents,
+    shipping_cents: o.shippingCents ?? null,
     source: page.source,
   }));
   const { error: insErr } = await admin.from("price_observations").insert(rows);
@@ -394,6 +414,59 @@ async function evaluateItem(admin: SupabaseClient, item: ItemRow, rules: Rules, 
       itemWide: true,
     });
   }
+}
+
+/**
+ * Quiet hours: new alerts are marked deferred and not pushed. Otherwise deferred alerts from the last
+ * 24 h are delivered together with the new ones as one morning summary.
+ */
+async function deliverPushes(
+  admin: SupabaseClient,
+  household: HouseholdRow | undefined,
+  householdId: string,
+  fresh: PendingAlert[],
+  ctx: { errors: { url: string; error: string }[] },
+) {
+  if (inQuietHours(household)) {
+    if (fresh.length) await admin.from("alert_events").update({ push_deferred: true }).in("id", fresh.map((a) => a.id));
+    return;
+  }
+  const { data: deferredRows } = await admin.from("alert_events")
+    .select("id, wish_item_id, seller, message, wish_items(name)")
+    .eq("household_id", householdId).eq("push_deferred", true).eq("push_sent", false)
+    .gt("ts", new Date(Date.now() - 24 * 3_600_000).toISOString());
+  const deferred: PendingAlert[] = ((deferredRows ?? []) as unknown as {
+    id: number; wish_item_id: string; seller: string; message: string; wish_items: { name: string } | null;
+  }[]).map((r) => ({ id: r.id, itemId: r.wish_item_id, itemName: r.wish_items?.name ?? "", seller: r.seller, message: r.message }));
+  const all = [...deferred, ...fresh.filter((a) => !deferred.some((d) => d.id === a.id))];
+  if (all.length === 0) return;
+
+  const res = deferred.length
+    ? await pushToHousehold(admin, householdId, {
+      title: `Yön aikana ${all.length} ${all.length === 1 ? "hälytys" : "hälytystä"}`,
+      body: [...new Set(all.map((a) => a.itemName))].slice(0, 5).join(", "),
+      url: "/#/alerts",
+      tag: "alerts-morning",
+    })
+    : await sendAlertPushes(admin, householdId, all);
+  const ids = all.map((a) => a.id);
+  await admin.from("alert_events").update({ push_deferred: false, ...(res.sent > 0 ? { push_sent: true } : {}) }).in("id", ids);
+  if (res.errors.length) ctx.errors.push(...res.errors.map((e) => ({ url: "push", error: e })));
+}
+
+/** Cron tick with nothing to fetch: send waiting quiet-hours summaries. Returns households served. */
+async function deliverDeferredOnly(admin: SupabaseClient): Promise<number> {
+  const { data } = await admin.from("alert_events").select("household_id").eq("push_deferred", true).eq("push_sent", false);
+  const ids = [...new Set((data ?? []).map((r) => r.household_id as string))];
+  if (!ids.length) return 0;
+  const { data: hs } = await admin.from("households").select(HOUSEHOLD_COLS).in("id", ids);
+  let served = 0;
+  for (const h of (hs ?? []) as HouseholdRow[]) {
+    if (inQuietHours(h)) continue;
+    await deliverPushes(admin, h, h.id, [], { errors: [] });
+    served++;
+  }
+  return served;
 }
 
 async function sendAlertPushes(admin: SupabaseClient, householdId: string, alerts: PendingAlert[]) {

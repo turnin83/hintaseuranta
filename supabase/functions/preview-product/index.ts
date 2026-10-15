@@ -3,6 +3,7 @@
 import { adminClient, CORS, json, userFromRequest } from "../_shared/http.ts";
 import { createRobotsCache, fetchPage } from "../_shared/fetcher.ts";
 import { extractPage } from "../_shared/extract.ts";
+import { enrichPage } from "../_shared/enrich.ts";
 import { domainOf, findUrl, normalizeUrl } from "../_shared/url.ts";
 
 Deno.serve(async (req) => {
@@ -27,7 +28,8 @@ Deno.serve(async (req) => {
   const domain = domainOf(url);
 
   const f = await fetchPage(url, createRobotsCache(), 15_000);
-  const page = f.html && !f.blocked ? extractPage(f.html, url) : null;
+  const parsed = f.html && !f.blocked ? extractPage(f.html, url) : null;
+  const page = parsed ? await enrichPage(parsed, url) : null;
 
   let suggestion: string | null = null;
   if (f.robotsAllowed === false) suggestion = "Kaupan robots.txt kieltää tämän sivun haun.";

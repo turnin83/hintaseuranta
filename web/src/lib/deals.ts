@@ -31,7 +31,7 @@ export function assessDeal(i: WishSummary, obsCount: number): DealAssessment {
     discountPct: null, tier: null, targetHit: false, allTimeLow: false, recommendation: null, reasons: [],
     lowConfidence: true, score: 0,
   };
-  if (p == null || i.best_availability === "out_of_stock") return none;
+  if (p == null || i.best_availability === "out_of_stock" || i.purchased_at) return none;
 
   const med = i.median_30d_cents;
   const discountPct = med ? Math.round(((med - p) / med) * 100) : null;

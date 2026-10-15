@@ -5,6 +5,7 @@ import { AVAILABILITY, ago, eur, pctDelta, signedPct } from "../lib/format.ts";
 import { countTags, hasTag } from "../lib/tags.ts";
 import { session } from "../lib/store.ts";
 import { TopBar } from "../components/chrome.tsx";
+import { CampaignBadge } from "../components/CampaignBadge.tsx";
 import { IconAlert, IconArrowDown, IconArrowUp, IconCheck, IconPlus } from "../components/icons.tsx";
 
 type Mode = "list" | "groups";
@@ -33,6 +34,7 @@ function usePref<T extends string>(name: string, initial: T): [T, (v: T) => void
 export function ListView() {
   const [items, setItems] = useState<WishSummary[] | null>(null);
   const [showInactive, setShowInactive] = useState(false);
+  const [showPurchased, setShowPurchased] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = usePref<Mode>("list-mode", "list");
   const [tag, setTag] = usePref<string>("list-tag", "");
@@ -51,7 +53,7 @@ export function ListView() {
       });
   }, []);
 
-  const base = (items ?? []).filter((i) => showInactive || i.active);
+  const base = (items ?? []).filter((i) => !i.purchased_at && (showInactive || i.active));
   const tagCounts = useMemo(() => countTags(base), [items, showInactive]);
   const untaggedCount = base.filter((i) => i.tags.length === 0).length;
   // A remembered tag that no longer exists falls back to "all".
@@ -63,7 +65,10 @@ export function ListView() {
     .filter((i) => !q || i.name.toLocaleLowerCase("fi").includes(q) || i.tags.some((t) => t.toLocaleLowerCase("fi").includes(q)))
     .sort((a, b) => Number(b.unread_alerts > 0) - Number(a.unread_alerts > 0) || a.priority - b.priority);
 
-  const inactiveCount = (items ?? []).filter((i) => !i.active).length;
+  const inactiveCount = (items ?? []).filter((i) => !i.active && !i.purchased_at).length;
+  const purchased = (items ?? []).filter((i) => i.purchased_at)
+    .sort((a, b) => (b.purchased_at ?? "").localeCompare(a.purchased_at ?? ""));
+  const savedTotal = purchased.reduce((n, i) => n + Math.max(0, savingsOf(i) ?? 0), 0);
   const lastFetch = (items ?? []).map((i) => i.last_fetched_at).filter(Boolean).sort().at(-1) ?? null;
   const hasTags = tagCounts.length > 0;
   const showSearch = (items?.length ?? 0) > 6;
@@ -71,6 +76,7 @@ export function ListView() {
   return (
     <div class="page stack">
       <TopBar title="Toivelista" />
+      <CampaignBadge />
       {error && <div class="notice bad">{error}</div>}
       {items === null && !error && (
         <div class="list" aria-busy="true">
@@ -147,8 +153,42 @@ export function ListView() {
           {showInactive ? "Piilota pois käytöstä olevat" : `Näytä pois käytöstä olevat (${inactiveCount})`}
         </button>
       )}
+
+      {purchased.length > 0 && (
+        <section class="stack-sm" aria-label="Ostetut">
+          <button class="btn ghost" onClick={() => setShowPurchased(!showPurchased)}>
+            {showPurchased ? "Piilota ostetut" : `Ostetut (${purchased.length})`}
+            {savedTotal > 0 && <span class="saved-total num"> · säästit {eur(savedTotal)}</span>}
+          </button>
+          {showPurchased && (
+            <div class="rows">
+              {purchased.map((i) => {
+                const saved = savingsOf(i);
+                return (
+                  <a class="row-item" href={`#/item/${i.id}`} key={i.id}>
+                    <span class="row-dot" aria-hidden="true" />
+                    <span class="row-main">
+                      <span class="row-name">{i.name}</span>
+                      <span class="row-sub">
+                        <span class="row-price num">{eur(i.purchased_price_cents!)}</span>
+                        {saved != null && saved > 0 && <span class="row-delta down num">säästö {eur(saved)}</span>}
+                        <span class="row-seller">{i.purchased_seller ?? ""} · {new Date(i.purchased_at!).toLocaleDateString("fi-FI")}</span>
+                      </span>
+                    </span>
+                  </a>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
+}
+
+/** Saved vs the usual (30 d median) price at purchase time; null when unknown. */
+export function savingsOf(i: WishSummary): number | null {
+  return i.purchased_price_cents != null && i.purchased_ref_cents != null ? i.purchased_ref_cents - i.purchased_price_cents : null;
 }
 
 /** One collapsible section per tag (most used first); an item with several tags appears in each. */

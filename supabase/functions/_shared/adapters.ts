@@ -1,7 +1,7 @@
 // Shop/aggregator-specific adapters. Only for data JSON-LD does not carry.
 // Each adapter gets the generic JSON-LD result (may be null) and may enrich or replace it.
 import type { Availability, Offer, PageData } from "./types.ts";
-import { toCents } from "./jsonld.ts";
+import { decodeEntities, parsePrice, toCents } from "./jsonld.ts";
 
 export type Adapter = (html: string, url: string, base: PageData | null) => PageData | null;
 
@@ -106,12 +106,16 @@ const hintaopas: Adapter = (html, _url, base) => {
     if (typeof seller !== "string" || typeof amount !== "number") continue;
     if (r.condition && r.condition !== "New") continue; // skip used/refurbished
     const orig = typeof r?.originalPrice?.amount === "number" ? toCents(r.originalPrice.amount) : null;
+    const fees = ((r?.shipping?.nodes ?? []) as { price?: { amount?: unknown } }[])
+      .map((n) => n?.price?.amount)
+      .filter((a): a is number => typeof a === "number" && a >= 0);
     const offer: Offer = {
       seller,
       priceCents: toCents(amount),
       currency: r.price.currency ?? "EUR",
       availability: hintaopasAvailability(r.stockStatus),
       lowest30dCents: orig != null && orig > toCents(amount)! ? orig : null,
+      shippingCents: fees.length ? toCents(Math.min(...fees)) : null,
     };
     const prev = bySeller.get(seller);
     if (!prev || offer.priceCents! < prev.priceCents!) bySeller.set(seller, offer);
@@ -129,8 +133,53 @@ const hintaopas: Adapter = (html, _url, base) => {
   };
 };
 
-// Registry: domain (without www.) -> adapter. hinta.fi needs none (seller offers are in JSON-LD).
+// ---------- hinta.fi ----------
+// Seller offers come from JSON-LD; the offer table adds delivery fee and availability per seller:
+// <tr class="hv-oft-tr" data-price=".." data-delivery-fee=".."> ... <span class="hv-visual-hide">Seller</span>
+//   ... title="Saatavuus: Varastossa"
+
+function hintafiAvailability(s: string | undefined): Availability | null {
+  if (!s) return null;
+  const t = s.toLowerCase();
+  if (t.includes("varastossa")) return "in_stock";
+  if (t.includes("tilattavissa") || t.includes("tilaustuote")) return "backorder";
+  if (t.includes("ennakko")) return "preorder";
+  if (t.includes("loppu") || t.includes("ei saatavilla")) return "out_of_stock";
+  return null;
+}
+
+const hintafi: Adapter = (html, _url, base) => {
+  if (!base || base.kind !== "aggregator") return base;
+  const rows = new Map<string, { fee: number | null; availability: Availability | null }>();
+  for (const m of html.matchAll(/<tr class="hv-oft-tr"([^>]*)>([\s\S]*?)<\/tr>/g)) {
+    const seller = m[2].match(/<span class="hv-visual-hide">([^<]+)<\/span>/)?.[1];
+    if (!seller) continue;
+    const fee = m[1].match(/data-delivery-fee="([^"]*)"/)?.[1];
+    const avail = m[2].match(/title="Saata(?:&shy;|\u00ad)?vuus: ([^"]+)"/)?.[1];
+    rows.set(decodeEntities(seller).trim().toLowerCase(), {
+      fee: fee != null ? toCents(parsePrice(fee)) : null,
+      availability: hintafiAvailability(avail),
+    });
+  }
+  if (rows.size === 0) return base;
+  return {
+    ...base,
+    source: "adapter:hintafi",
+    offers: base.offers.map((o) => {
+      const r = o.seller ? rows.get(o.seller.toLowerCase()) : undefined;
+      if (!r) return o;
+      return {
+        ...o,
+        shippingCents: r.fee ?? o.shippingCents ?? null,
+        availability: o.availability === "unknown" && r.availability ? r.availability : o.availability,
+      };
+    }),
+  };
+};
+
+// Registry: domain (without www.) -> adapter.
 export const ADAPTERS: Record<string, Adapter> = {
   "verkkokauppa.com": verkkokauppa,
   "hintaopas.fi": hintaopas,
+  "hinta.fi": hintafi,
 };

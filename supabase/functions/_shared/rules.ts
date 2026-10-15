@@ -208,11 +208,13 @@ export function passesCooldown(c: AlertCandidate, prev: PrevAlert | undefined, n
   return now - prev.ts >= cooldownHours * 3_600_000;
 }
 
-// Deterministic Finnish euro format (ICU output varies between runtimes): 1299.9 -> "1 299,90 €"
+// Deterministic Finnish euro format (ICU output varies between runtimes): 1299.9 -> "1 299,90 €".
+// Spaces are non-breaking so an amount never wraps across lines.
+const NBSP = String.fromCharCode(0xa0);
 export function eur(cents: number): string {
-  const whole = Math.floor(Math.abs(cents) / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  const whole = Math.floor(Math.abs(cents) / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
   const frac = Math.abs(cents) % 100;
-  return `${cents < 0 ? "-" : ""}${whole}${frac ? "," + String(frac).padStart(2, "0") : ""} €`;
+  return `${cents < 0 ? "-" : ""}${whole}${frac ? "," + String(frac).padStart(2, "0") : ""}${NBSP}€`;
 }
 
 export function describeAlert(c: AlertCandidate): string {
