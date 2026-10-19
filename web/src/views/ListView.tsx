@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabase.ts";
 import type { WishSummary } from "../lib/types.ts";
 import { AVAILABILITY, ago, eur, pctDelta, signedPct } from "../lib/format.ts";
 import { countTags, hasTag } from "../lib/tags.ts";
-import { session } from "../lib/store.ts";
+import { dataVersion, session } from "../lib/store.ts";
 import { TopBar } from "../components/chrome.tsx";
 import { CampaignBadge } from "../components/CampaignBadge.tsx";
 import { Sparkline } from "../components/Sparkline.tsx";
@@ -60,7 +60,7 @@ export function ListView() {
       }
       setTrend(m);
     });
-  }, []);
+  }, [dataVersion.value]);
 
   const base = (items ?? []).filter((i) => !i.purchased_at && (showInactive || i.active));
   const tagCounts = useMemo(() => countTags(base), [items, showInactive]);

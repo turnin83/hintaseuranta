@@ -8,6 +8,9 @@ import { TopBar } from "../components/chrome.tsx";
 import { IconShare, IconTrash } from "../components/icons.tsx";
 import { versionLabel } from "../lib/version.ts";
 import { type Campaign, fiDate, intervalLabel, isRunning, refreshCampaigns, today } from "../lib/campaigns.ts";
+import { restoreItem, TRASH_DAYS } from "../lib/trash.ts";
+import type { WishSummary } from "../lib/types.ts";
+import { eur } from "../lib/format.ts";
 import { RulesForm, rulesSummary } from "../components/RulesForm.tsx";
 import { DEFAULT_RULES, diffRules, mergeRules, type Rules } from "@shared/rules.ts";
 
@@ -25,11 +28,13 @@ export function SettingsView() {
       <NotificationsSection />
       <QuietHoursSection />
       <AlertRulesSection />
+      <PurchasesSection />
       <HouseholdSection />
       <IntervalSection />
       <CampaignsSection />
       <ShopsSection />
       <RunsSection />
+      <TrashSection />
       <section class="section">
         <h2>Tili</h2>
         <p class="muted">{session.value?.user.email}</p>
@@ -172,7 +177,7 @@ function AlertRulesSection() {
       setSaved(m);
       setR(m);
     });
-    supabase.from("wish_items").select("id", { count: "exact", head: true }).neq("rules", "{}").then(({ count }) => setCustom(count ?? 0));
+    supabase.from("wish_items").select("id", { count: "exact", head: true }).neq("rules", "{}").is("deleted_at", null).then(({ count }) => setCustom(count ?? 0));
   }, []);
 
   const save = async (next: Rules, msg: string) => {
@@ -441,6 +446,113 @@ function CampaignsSection() {
           <button class="btn primary" disabled={!name.trim()}>Lisää</button>
         </form>
       </details>
+    </section>
+  );
+}
+
+/** Local calendar date of an ISO timestamp, YYYY-MM-DD (compared with campaign days). */
+function localDay(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function PurchasesSection() {
+  const [items, setItems] = useState<WishSummary[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  useEffect(() => {
+    supabase.from("v_wish_summary").select("*").not("purchased_at", "is", null).order("purchased_at", { ascending: false })
+      .then(({ data }) => setItems((data ?? []) as WishSummary[]));
+    supabase.from("campaigns").select("*").order("starts_on").then(({ data }) => setCampaigns((data ?? []) as Campaign[]));
+  }, [dataVersion.value]);
+  if (items.length === 0) return null;
+
+  const saved = (i: WishSummary) =>
+    i.purchased_ref_cents != null && i.purchased_price_cents != null ? Math.max(0, i.purchased_ref_cents - i.purchased_price_cents) : 0;
+  const total = items.reduce((n, i) => n + saved(i), 0);
+  const spent = items.reduce((n, i) => n + (i.purchased_price_cents ?? 0), 0);
+  const byCampaign = campaigns
+    .map((c) => {
+      const inIt = items.filter((i) => { const d = localDay(i.purchased_at!); return c.starts_on <= d && d <= c.ends_on; });
+      return { c, count: inIt.length, saved: inIt.reduce((n, i) => n + saved(i), 0) };
+    })
+    .filter((x) => x.count > 0);
+
+  return (
+    <section class="section" aria-labelledby="h-purchases">
+      <h2 id="h-purchases">Ostokset</h2>
+      <p>
+        <strong class="saved-total num">Säästit {eur(total)}</strong>
+        <span class="muted"> · {items.length} {items.length === 1 ? "ostos" : "ostosta"}, yhteensä {eur(spent)}</span>
+      </p>
+      <p class="meta">Säästö verrattuna tuotteen tavalliseen hintaan (30 päivän mediaani) ostohetkellä.</p>
+      {byCampaign.length > 0 && (
+        <div class="stack-sm">
+          {byCampaign.map(({ c, count, saved: s }) => (
+            <p key={c.id} class="num">
+              {c.name} {c.starts_on.slice(0, 4)}: {count} {count === 1 ? "ostos" : "ostosta"}, säästit {eur(s)}
+            </p>
+          ))}
+        </div>
+      )}
+      <details class="panel">
+        <summary>Ostetut tuotteet<span class="summary-meta">{items.length}</span></summary>
+        <div class="rows">
+          {items.map((i) => (
+            <a class="row-item" href={`#/item/${i.id}`} key={i.id}>
+              <span class="row-dot" aria-hidden="true" />
+              <span class="row-main">
+                <span class="row-name">{i.name}</span>
+                <span class="row-sub">
+                  <span class="row-price num">{eur(i.purchased_price_cents!)}</span>
+                  {saved(i) > 0 && <span class="row-delta down num">säästö {eur(saved(i))}</span>}
+                  <span class="row-seller">{i.purchased_seller ?? ""} · {new Date(i.purchased_at!).toLocaleDateString("fi-FI")}</span>
+                </span>
+              </span>
+            </a>
+          ))}
+        </div>
+        <p class="meta">Ostetun voi siivota pois tuotteen sivulta (Poista ostoksista). Se siirtyy roskakoriin.</p>
+      </details>
+    </section>
+  );
+}
+
+type TrashRow = { id: string; name: string; deleted_at: string; purchased_at: string | null };
+
+function TrashSection() {
+  const [rows, setRows] = useState<TrashRow[]>([]);
+  const load = () =>
+    supabase.from("wish_items").select("id, name, deleted_at, purchased_at").not("deleted_at", "is", null)
+      .order("deleted_at", { ascending: false }).then(({ data }) => setRows((data ?? []) as TrashRow[]));
+  useEffect(() => {
+    load();
+  }, [dataVersion.value]);
+  if (rows.length === 0) return null;
+
+  const daysLeft = (iso: string) => Math.max(0, TRASH_DAYS - Math.floor((Date.now() - Date.parse(iso)) / 86_400_000));
+  const purge = async (r: TrashRow) => {
+    if (!confirm(`Poistetaanko "${r.name}" pysyvästi? Hintahistoria häviää.`)) return;
+    const { error } = await supabase.from("wish_items").delete().eq("id", r.id);
+    if (error) toast(error.message);
+    else { toast("Poistettu pysyvästi"); load(); }
+  };
+
+  return (
+    <section class="section" aria-labelledby="h-trash">
+      <h2 id="h-trash">Poistetut</h2>
+      <p class="meta">Poistetut tuotteet säilyvät hintahistorioineen {TRASH_DAYS} päivää, sitten ne poistuvat lopullisesti.</p>
+      <div class="rows">
+        {rows.map((r) => (
+          <div class="row-item" key={r.id}>
+            <span class="row-main">
+              <span class="row-name">{r.name}</span>
+              <span class="row-sub">{r.purchased_at ? "ostettu · " : ""}poistuu {daysLeft(r.deleted_at)} pv kuluttua</span>
+            </span>
+            <button class="btn small" onClick={async () => { if (await restoreItem(r.id)) toast(`"${r.name}" palautettu`); }}>Palauta</button>
+            <button class="icon-btn" aria-label={`Poista ${r.name} pysyvästi`} onClick={() => purge(r)}><IconTrash /></button>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

@@ -32,7 +32,7 @@ export function AddView(props: { url: string | null; item: string | null; seller
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    supabase.from("wish_items").select("id, name, product_links(ean)").order("name").then(({ data }) => {
+    supabase.from("wish_items").select("id, name, product_links(ean)").is("deleted_at", null).is("purchased_at", null).order("name").then(({ data }) => {
       const opts = (data ?? []).map((w: { id: string; name: string; product_links: { ean: string | null }[] }) => ({
         id: w.id,
         name: w.name,

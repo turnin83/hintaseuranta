@@ -37,7 +37,7 @@ export function countTags(items: { tags: string[] }[]): TagCount[] {
 export function useHouseholdTags(): TagCount[] {
   const [tags, setTags] = useState<TagCount[]>([]);
   useEffect(() => {
-    supabase.from("wish_items").select("tags").then(({ data }) => setTags(countTags((data ?? []) as { tags: string[] }[])));
+    supabase.from("wish_items").select("tags").is("deleted_at", null).then(({ data }) => setTags(countTags((data ?? []) as { tags: string[] }[])));
   }, [dataVersion.value]);
   return tags;
 }

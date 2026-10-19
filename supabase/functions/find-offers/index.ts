@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
   const householdId = member.household_id as string;
 
   const body = await req.json().catch(() => ({})) as { wish_item_id?: string; query?: string; product_url?: string };
-  const { data: item } = await admin.from("wish_items").select("id, name")
+  const { data: item } = await admin.from("wish_items").select("id, name").is("deleted_at", null)
     .eq("id", body.wish_item_id ?? "").eq("household_id", householdId).maybeSingle();
   if (!item) return json({ error: "Toiveasiaa ei löytynyt" }, 404);
 

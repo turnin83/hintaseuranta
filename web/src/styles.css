@@ -518,3 +518,12 @@ html, body { overflow-x: clip; }
 .spark-up circle { fill: var(--bad); }
 .item-card .price-row { flex-wrap: nowrap; }
 .item-card .price-row .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Toast with an action button (Kumoa) */
+.toast.with-action { display: flex; align-items: center; gap: var(--sp-3); padding-right: 8px; width: min(560px, calc(100% - 32px)); }
+.toast.with-action span { flex: 1; min-width: 0; }
+.toast-action {
+  flex: none; min-height: 40px; padding: 0 14px; border: 0; border-radius: 6px;
+  background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 700; cursor: pointer;
+}
+.btn.ghost.danger { color: var(--bad); }

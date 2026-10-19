@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { route } from "../lib/router.ts";
-import { toastMsg, unreadCount } from "../lib/store.ts";
+import { toastAction, toastMsg, unreadCount } from "../lib/store.ts";
 import { IconBack, IconBell, IconList, IconPlus, IconSettings, IconTag } from "./icons.tsx";
 
 export function TopBar(props: { title: string; parent?: string; children?: ComponentChildren }) {
@@ -41,5 +41,16 @@ export function TabBar() {
 }
 
 export function Toast() {
-  return toastMsg.value ? <div class="toast" role="status">{toastMsg.value}</div> : null;
+  if (!toastMsg.value) return null;
+  const action = toastAction.value;
+  return (
+    <div class={`toast${action ? " with-action" : ""}`} role="status">
+      <span>{toastMsg.value}</span>
+      {action && (
+        <button class="toast-action" onClick={() => { toastMsg.value = null; toastAction.value = null; action.run(); }}>
+          {action.label}
+        </button>
+      )}
+    </div>
+  );
 }

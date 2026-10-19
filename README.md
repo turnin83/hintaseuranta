@@ -179,6 +179,15 @@ Tuotesivu → **Merkitse ostetuksi** (hinta, kauppa, päivä): seuranta ja häly
 historia säilyy. Säästö = tuotteen tavallinen hinta (30 pv mediaani ostohetkellä) − ostohinta. Toivelistan
 lopussa *Ostetut (n) · säästit X €*. *Peru ostos* palauttaa seurannan.
 
+## Ostokset ja roskakori
+
+- **Ostetut säilyvät** pysyvästi (hintoja ei haeta 30 päivän jälkeen). Asetukset → **Ostokset**: säästöt
+  yhteensä ja kampanjoittain sekä lista ostetuista. Ostetun voi siivota pois tuotteen sivulta (*Poista ostoksista*).
+- *Palautettu / peru ostos* palauttaa tuotteen seurantaan historioineen (esim. tuote palautettiin kauppaan).
+- **Roskakori**: *Poista* siirtää tuotteen roskakoriin (`wish_items.deleted_at`), ilmoituksessa on *Kumoa*.
+  Asetukset → **Poistetut**: palauta tai poista pysyvästi. Ajastettu `purge-trash` poistaa yli 30 päivää
+  roskakorissa olleet lopullisesti. Roskakorissa olevia ei haeta eikä niistä hälytetä.
+
 ## Hinta laski ostoksen jälkeen
 
 Ostettua tuotetta haetaan vielä 30 päivää hiljaa. Muita hälytyksiä ei tule, mutta jos paras hinta laskee

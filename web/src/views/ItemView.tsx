@@ -11,6 +11,7 @@ import { TagInput } from "../components/TagInput.tsx";
 import { FindOffers } from "../components/FindOffers.tsx";
 import { setPendingDirectLink } from "../lib/direct-links.ts";
 import { assessDeal } from "../lib/deals.ts";
+import { moveToTrash } from "../lib/trash.ts";
 import { sellerMatchesShop } from "@shared/search.ts";
 import type { Shop } from "../lib/types.ts";
 import { AFTER_PURCHASE_DAYS, diffRules, mergeRules, RULE_LABELS, type RuleName, type Rules } from "@shared/rules.ts";
@@ -431,13 +432,7 @@ function EditPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }
   };
 
   const remove = async () => {
-    if (!confirm(`Poistetaanko "${item.name}" ja kaikki sen hintatiedot?`)) return;
-    const { error } = await supabase.from("wish_items").delete().eq("id", item.id);
-    if (error) toast(error.message);
-    else {
-      toast("Poistettu");
-      go("#/");
-    }
+    if (await moveToTrash(item.id, item.name)) go("#/");
   };
 
   return (
@@ -559,7 +554,7 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
       : null;
     const watchDays = Math.max(0, AFTER_PURCHASE_DAYS - Math.floor((Date.now() - Date.parse(item.purchased_at)) / 86_400_000));
     const undo = async () => {
-      if (!confirm("Perutaanko ostomerkintä? Seuranta jatkuu.")) return;
+      if (!confirm("Perutaanko ostomerkintä (esim. tuote palautettiin)? Seuranta ja hälytykset jatkuvat, historia säilyy.")) return;
       const { error } = await supabase.from("wish_items").update({
         purchased_at: null, purchased_price_cents: null, purchased_seller: null, purchased_ref_cents: null, active: true,
       }).eq("id", item.id);
@@ -580,7 +575,10 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
         {item.best_price_cents != null && item.purchased_price_cents != null && item.best_price_cents < item.purchased_price_cents && (
           <p class="reco reco-buy"><strong>Hinta on nyt {eur(item.best_price_cents)}</strong> ({item.best_seller}), {eur(item.purchased_price_cents - item.best_price_cents)} vähemmän kuin maksoit.</p>
         )}
-        <div class="actions"><button class="btn ghost" onClick={undo}>Peru ostos</button></div>
+        <div class="actions">
+          <button class="btn ghost" onClick={undo}>Palautettu / peru ostos</button>
+          <button class="btn ghost danger" onClick={async () => { if (await moveToTrash(item.id, item.name)) go("#/"); }}>Poista ostoksista</button>
+        </div>
       </div>
     );
   }
