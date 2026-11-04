@@ -45,17 +45,19 @@ export function assessDeal(i: WishSummary, obsCount: number): DealAssessment {
   const allTimeLow = i.min_all_cents != null && p <= i.min_all_cents && med != null && p < med * 0.98 && obsCount >= MIN_OBS;
   const lowConfidence = med == null || obsCount < MIN_OBS;
 
-  const reasons: string[] = [];
-  if (discountPct != null && discountPct >= 5) reasons.push(`${discountPct} % alle tavallisen hinnan`);
-  if (allTimeLow) reasons.push("halvin koskaan seurattu hinta");
-  if (targetHit) reasons.push("alittaa tavoitehinnan");
-
   const warnings: string[] = [];
   const claim = claimCheck(p, i.best_claim_cents, i.best_own_low_cents);
   if (claim && claim.kind !== "ok") warnings.push(describeClaim(claim));
   // Price raised and then "discounted": the usual price looks high, but we have seen it clearly lower.
   const wasLower = i.min_all_cents != null && meaningfulDrop(p, i.min_all_cents) && p > i.min_all_cents * 1.03;
   if (wasLower) warnings.push(`Hinta on ollut alempi: ${eur(i.min_all_cents!)}.`);
+
+  const reasons: string[] = [];
+  // After a raise the 30-day median isn't a "usual" price, so say only what it is.
+  if (discountPct != null && discountPct >= 5)
+    reasons.push(`${discountPct} % alle ${wasLower ? "viime aikojen" : "tavallisen"} hinnan`);
+  if (allTimeLow) reasons.push("halvin koskaan seurattu hinta");
+  if (targetHit) reasons.push("alittaa tavoitehinnan");
 
   let recommendation: Recommendation | null = null;
   if ((discountPct ?? 0) >= 40 || targetHit || (allTimeLow && (discountPct ?? 0) >= 15)) recommendation = "buy";

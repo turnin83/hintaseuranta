@@ -101,6 +101,7 @@ export type AlertEvent = {
 export type AlertDetails = {
   headline: string;
   lines: string[];
+  line_rules?: string[];
   warning: string | null;
   seller: string;
 };

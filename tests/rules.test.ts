@@ -177,6 +177,7 @@ test("event: one readable alert per item and run", () => {
     "18 % alle tavallisen 243 €",
     "Laski 319 € → 199 €",
   ]);
+  assert.deepEqual(e.lineRules, ["below_target", "all_time_low", "below_median", "drop"]);
   assert.equal(e.notify, true);
   assert.equal(e.seller, "Verkkokauppa.com");
 });

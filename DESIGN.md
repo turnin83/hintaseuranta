@@ -30,15 +30,21 @@ Dark is the default; light follows the OS.
 | `--surface` | #1a1d21 | #ffffff | cards, inputs |
 | `--surface-2` | #22262b | #f0f1f2 | secondary buttons, segmented control |
 | `--line` | #2e333a | #dfe2e6 | borders, dividers, chart grid |
-| `--text` / `--text-2` / `--text-3` | #eef0f2 / #b4bac2 / #8a929c | #15181c / #4a525c / #6b737d | ink levels |
-| `--accent` | #4fd18b | #13824a | good deal, primary action, unread |
+| `--text` / `--text-2` / `--text-3` | #eef0f2 / #b4bac2 / #8a929c | #15181c / #4a525c / #636b75 | ink levels (text-3 ≥ 4.5:1 on bg and surface-2) |
+| `--accent` | #4fd18b | #0f7440 | good deal, primary action, unread (≥ 4.5:1 on accent-soft) |
 | `--warn` | #f2b84b | #8a5a00 | info-level alerts, failing links |
 | `--bad` | #ef7a6f | #b8352a | price up, errors, destructive |
+| `--rule-blue` / `-soft` | #7ab3f0 / #1b2c42 | #1c5cab / #e3edfa | alert tag: below 30-day median |
+| `--rule-violet` / `-soft` | #aaa2f2 / #28254a | #4a3aa7 / #ecebf8 | alert tag: price drop |
 
 - Green = price went down / good; red = up / error. Never color alone: always an arrow icon, sign (−/+) or label.
 - Chart series use the validated categorical palette `--s1…--s8` (dataviz reference palette; dark steps
   validated against `--surface`). Fixed order, max 8 series, color follows the (link, seller) entity.
   Light mode slots 3–5 are under 3:1 → the per-shop price table under the chart is mandatory.
+- Alert rule tags (what happened): all-time low = filled accent (strongest), below target = accent soft,
+  below median = blue, drop = violet, back in stock = neutral, price after purchase = warn,
+  broken link = bad. The tag always carries its label text; reason lines repeat the colour as an 8px
+  marker. Tag text on its soft background ≥ 4.5:1 in both themes.
 
 ## Shape & space
 - Radius: fields/buttons 8px, cards 12px, chips 6px.

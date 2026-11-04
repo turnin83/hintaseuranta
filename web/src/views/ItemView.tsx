@@ -142,8 +142,15 @@ export function ItemView({ id }: { id: string }) {
     return l?.last_status && l.last_status !== "ok" ? "kaupan sivu ei anna hintaa" : "ei päivittynyt";
   };
   const tableSeries = [...orderedSeries].sort((a, b) => Number(isStale(a)) - Number(isStale(b)));
-  // Cheapest current offer (fresh, not out of stock) gets the "Halvin nyt" mark.
-  const fresh = orderedSeries.filter((s) => s.link_active && s.availability !== "out_of_stock" && !isStale(s));
+  // Cheapest current offer (fresh, not out of stock, from a known shop) gets the "Halvin nyt" mark.
+  // A comparison page's anonymous lowest price can't be bought as such, so it never wins.
+  const fresh = orderedSeries.filter(
+    (s) =>
+      s.link_active &&
+      s.availability !== "out_of_stock" &&
+      !isStale(s) &&
+      !(s.shop_strategy === "aggregator" && !s.seller),
+  );
   const cheapestKey = fresh.length
     ? (() => {
       const c = fresh.reduce((a, b) => (b.price_cents < a.price_cents ? b : a));

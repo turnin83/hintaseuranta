@@ -355,6 +355,7 @@ async function insertEvent(
     details: {
       headline: d.headline,
       lines: d.lines,
+      line_rules: d.lineRules,
       warning: d.warning,
       seller: d.seller,
       reasons: reasons.map((r) => ({ rule: r.rule, link: r.link, series: r.series, price: r.priceCents })),

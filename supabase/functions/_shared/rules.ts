@@ -325,6 +325,8 @@ export type EventDraft = {
   series: string;
   headline: string;
   lines: string[];
+  /** rule of each line (same order), for colour coding */
+  lineRules: RuleName[];
   warning: string | null;
   notify: boolean;
   /** plain text for old clients and push bodies */
@@ -410,8 +412,11 @@ export function buildEvent(
   }
   const uniq = [...byRule.values()];
   const primary = uniq[0];
-  const lines = [lineOf(primary, true, primary.seller), ...uniq.slice(1).map((r) => lineOf(r, false, primary.seller))]
-    .filter(Boolean);
+  const pairs = [
+    { rule: primary.rule, text: lineOf(primary, true, primary.seller) },
+    ...uniq.slice(1).map((r) => ({ rule: r.rule, text: lineOf(r, false, primary.seller) })),
+  ].filter((x) => x.text);
+  const lines = pairs.map((x) => x.text);
   const warning = (opts.warnings ?? []).filter((w): w is string => Boolean(w)).join(" ") || null;
   const significant = (r: Reason) =>
     ALWAYS_PUSH.includes(r.rule) ||
@@ -428,6 +433,7 @@ export function buildEvent(
     series: primary.series,
     headline,
     lines,
+    lineRules: pairs.map((x) => x.rule),
     warning,
     notify: uniq.some(significant),
     message: [headline, ...lines].join(" · "),

@@ -65,6 +65,7 @@ test("raised then discounted: no buy recommendation, warning shown", () => {
   assert.equal(a.tier, "excellent");
   assert.equal(a.recommendation, "consider");
   assert.ok(a.warnings[0].replaceAll(String.fromCharCode(0xa0), " ").includes("Hinta on ollut alempi: 149 €"));
+  assert.match(a.reasons[0], /alle viime aikojen hinnan$/);
   // own target still wins
   const t = assessDeal(item({ best_price_cents: 17900, median_30d_cents: 29900, min_all_cents: 14900, target_price_cents: 18000 }), 20);
   assert.equal(t.recommendation, "buy");
