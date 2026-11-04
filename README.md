@@ -203,9 +203,10 @@ käyttämistä varten (toisto aikaisintaan 72 h välein tai kun hinta laskee lis
   tekee yhden hälytyksen *Linkki ei toimi* (toisto aikaisintaan viikon päästä).
 - **Keruu pysähtynyt**: Supabase ei voi hälyttää itse, jos projekti on pausella. GitHub Actions
   (`keepalive.yml`, tunneittain) kutsuu `rpc/health` ja epäonnistuu, jos projekti ei vastaa tai onnistunutta
-  hakua ei ole ollut 3 tuntiin kampanjan aikana (tarkistus joka tunti) tai 26 tuntiin muulloin (tarkistus
-  klo 05 ja 17 UTC). GitHub lähettää epäonnistuneesta ajastetusta ajosta sähköpostin. Sama tila näkyy
-  Asetukset → *Viimeisimmät haut* -kohdan ensimmäisellä rivillä.
+  hakua ei ole ollut 3 tuntiin kampanjan aikana tai 26 tuntiin muulloin. GitHub lähettää epäonnistuneesta
+  ajastetusta ajosta sähköpostin. Huom: GitHub käynnistää ajastetut ajot ruuhka-aikaan usein tunteja
+  myöhässä, joten tämä on varaverkko. Sama tila näkyy heti Asetukset → *Viimeisimmät haut* -kohdan
+  ensimmäisellä rivillä.
 - **Iso pudotus luetaan uudelleen**: jos hinta on pudonnut vähintään 30 % edellisestä lukemasta, sivu luetaan
   heti uudestaan (`confirmDrops`). Sama hinta → tallennetaan; tavallinen hinta → tallennetaan se (kertaluontoinen
   lukuvirhe); muuten pudotusta ei tallenneta ja linkki haetaan uudelleen seuraavalla 15 min tickillä
