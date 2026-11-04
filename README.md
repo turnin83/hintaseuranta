@@ -143,7 +143,8 @@ Jokainen push `main`-haaraan julkaisee uuden version.
 ### 7. Keepalive (GitHub Actions)
 
 Repo → Settings → Secrets → Actions: `SUPABASE_URL` ja `SUPABASE_ANON_KEY`. Workflow
-`.github/workflows/keepalive.yml` tekee päivittäin yhden REST-kutsun (ks. ilmaistason rajat alla).
+`.github/workflows/keepalive.yml` tekee tunneittain yhden REST-kutsun (ks. ilmaistason rajat ja
+terveysvahti alla). Julkisessa repossa Actions-ajot ovat ilmaisia.
 
 ### 8. Puhelin
 
@@ -172,6 +173,8 @@ kampanjoista (`effective_interval_minutes`).
 
 Asetukset → **Hiljaiset tunnit** (oletus 23–07, Europe/Helsinki): yöllä syntyneitä hälytyksiä ei pushata,
 vaan ne merkitään siirretyiksi (`push_deferred`) ja lähetetään aamulla yhtenä koosteena. Hinnat haetaan silti.
+Poikkeus: kampanjan aikana *Alle tavoitehinnan* ja *Uusi alin hinta* pushataan heti myös yöllä
+(`CAMPAIGN_NIGHT_RULES`), koska tarjoukset alkavat usein keskiyöllä ja rajattu erä voi loppua aamuun mennessä.
 
 ## Ostettu ja säästö
 
@@ -199,8 +202,18 @@ käyttämistä varten (toisto aikaisintaan 72 h välein tai kun hinta laskee lis
 - **Rikkinäinen linkki**: linkki, joka ei ole antanut hintaa yli vuorokauteen (`product_links.failing_since`),
   tekee yhden hälytyksen *Linkki ei toimi* (toisto aikaisintaan viikon päästä).
 - **Keruu pysähtynyt**: Supabase ei voi hälyttää itse, jos projekti on pausella. GitHub Actions
-  (`keepalive.yml`, 2×/pv) kutsuu `rpc/health` ja epäonnistuu, jos projekti ei vastaa tai onnistunutta hakua
-  ei ole ollut 26 tuntiin. GitHub lähettää epäonnistuneesta ajastetusta ajosta sähköpostin.
+  (`keepalive.yml`, tunneittain) kutsuu `rpc/health` ja epäonnistuu, jos projekti ei vastaa tai onnistunutta
+  hakua ei ole ollut 3 tuntiin kampanjan aikana (tarkistus joka tunti) tai 26 tuntiin muulloin (tarkistus
+  klo 05 ja 17 UTC). GitHub lähettää epäonnistuneesta ajastetusta ajosta sähköpostin. Sama tila näkyy
+  Asetukset → *Viimeisimmät haut* -kohdan ensimmäisellä rivillä.
+- **Iso pudotus luetaan uudelleen**: jos hinta on pudonnut vähintään 30 % edellisestä lukemasta, sivu luetaan
+  heti uudestaan (`confirmDrops`). Sama hinta → tallennetaan; tavallinen hinta → tallennetaan se (kertaluontoinen
+  lukuvirhe); muuten pudotusta ei tallenneta ja linkki haetaan uudelleen seuraavalla 15 min tickillä
+  (enintään 3 kertaa, sitten hinta tallennetaan sellaisenaan).
+- **Ristiintarkistus**: kun vertailusivu (hinta.fi, hintaopas.fi) näyttää hinnan kaupalle, jota seurataan myös
+  suoraan, se tallennetaan suoran linkin `xcheck`-kenttään (vertailusivun riviä ei tallenneta hintahistoriaan).
+  Tuotesivu näyttää huomautuksen, jos hinnat eroavat yli 5 % (ja vähintään 1 €) ja lukemat ovat enintään
+  6 tunnin päässä toisistaan. Ei hälytyksiä.
 
 ## Toimituskulut
 
@@ -219,7 +232,8 @@ kampanjan aikana).
 Black Week -kampanja nostaa hakutiheyden automaattisesti tunnin välein 20.–30.11. (ks. Kampanjat).
 Cron-lauseketta ei tarvitse muuttaa: 15 minuutin tick hakee vain erääntyneet linkit.
 
-Tarkista viikkoa ennen: Asetukset → *Viimeisimmät haut* ja *Kaupat* (virheet, estot).
+Tarkista viikkoa ennen: Asetukset → *Viimeisimmät haut* ja *Kaupat* (virheet, estot), sekä
+`npm run shops:check` (lukeeko parseri jokaisen kaupan sivun kuten ennen; ks. Kehitys).
 
 ## Supabase ilmaistason rajat
 
@@ -279,6 +293,8 @@ vanhat merkitään luetuiksi automaattisesti.
 
 ```sh
 npm test                  # parseri + säännöt (Node, tallennetut fixturet)
+npm run shops:check       # hakee jokaisen kaupan testisivun nyt ja vertaa tallennettuun (tests/fixtures/shops.json)
+node scripts/shop-fixtures.ts capture [domain]   # tallentaa kauppojen sivut uudelleen testiaineistoksi
 npm run check:functions   # Deno-tyyppitarkistus Edge Functioneille
 npm run probe -- <url>    # diagnostiikka paikallisesti: robots, status, JSON-LD, bottiesto
 node scripts/find-local.ts <EAN tai hakusanat>   # "Etsi muista kaupoista" paikallisesti

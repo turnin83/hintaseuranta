@@ -109,6 +109,45 @@ export function meaningfulDrop(fromCents: number, toCents: number): boolean {
   return fromCents - toCents >= 100 && toCents <= fromCents * 0.99;
 }
 
+/** A price that fell at least this much since the last reading is read again before it is believed. */
+export const BIG_DROP_PCT = 30;
+
+type Readable = { seller: string | null; priceCents: number | null };
+const isBigDrop = (cents: number | null, last: number | undefined) =>
+  cents != null && last != null && cents <= last * (1 - BIG_DROP_PCT / 100);
+
+/** Offers whose price fell >= BIG_DROP_PCT since the series' last reading (key = seller, "" = the shop). */
+export function bigDrops<T extends Readable>(offers: T[], lastCents: Map<string, number>): T[] {
+  return offers.filter((o) => isBigDrop(o.priceCents, lastCents.get(o.seller ?? "")));
+}
+
+/**
+ * Big drops must survive an immediate re-read: campaign pages can trip the parser (member price, monthly
+ * instalment, an accessory). Per big-drop offer: the re-read agrees within 1 % -> keep; the re-read shows
+ * no big drop -> use the re-read (a one-off slip); otherwise (re-read failed, seller missing, a different
+ * low price) -> unconfirmed, not recorded now. Other offers pass through unchanged.
+ */
+export function confirmDrops<T extends Readable>(
+  offers: T[],
+  lastCents: Map<string, number>,
+  recheck: T[] | null,
+): { offers: T[]; unconfirmed: T[] } {
+  const kept: T[] = [];
+  const unconfirmed: T[] = [];
+  for (const o of offers) {
+    const key = o.seller ?? "";
+    if (!isBigDrop(o.priceCents, lastCents.get(key))) {
+      kept.push(o);
+      continue;
+    }
+    const r = recheck?.find((x) => (x.seller ?? "") === key && x.priceCents != null);
+    if (r && Math.abs(r.priceCents! - o.priceCents!) <= o.priceCents! * 0.01) kept.push(o);
+    else if (r && !isBigDrop(r.priceCents, lastCents.get(key))) kept.push(r);
+    else unconfirmed.push(o);
+  }
+  return { offers: kept, unconfirmed };
+}
+
 export function pctBelow(priceCents: number, refCents: number): number {
   return Math.round((1 - priceCents / refCents) * 100);
 }
@@ -343,6 +382,8 @@ const PRIORITY: RuleName[] = [
   "link_broken",
 ];
 const ALWAYS_PUSH: RuleName[] = ["price_after_purchase", "below_target", "all_time_low", "back_in_stock", "link_broken"];
+/** Pushed at once even during quiet hours while a shopping campaign runs (deals start at midnight). */
+export const CAMPAIGN_NIGHT_RULES: RuleName[] = ["below_target", "all_time_low"];
 
 function headlineOf(r: Reason): string {
   const p = eur(r.priceCents);

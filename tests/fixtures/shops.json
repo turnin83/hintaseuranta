@@ -1,0 +1,249 @@
+[
+  {
+    "domain": "caravankoti.com",
+    "url": "https://www.caravankoti.com/product/3786/statt-avalanche-s1000-akkukayttoinen-lumentyonnin",
+    "fixture": "shop-caravankoti-com.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 11990
+    }
+  },
+  {
+    "domain": "clasohlson.com",
+    "url": "https://www.clasohlson.com/fi/Oral-B-iO-3-Duo-S%C3%A4hk%C3%B6hammasharja%2C-2-kpl/p/44-9953",
+    "fixture": "shop-clasohlson-com.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 9900
+    }
+  },
+  {
+    "domain": "crema.fi",
+    "url": "https://www.crema.fi/fi/products/sage/the-super-q-blender",
+    "fixture": "shop-crema-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 46990
+    }
+  },
+  {
+    "domain": "elisa.fi",
+    "url": "https://elisa.fi/kauppa/tuote/sony-bravia-7-mk2-75-tuumainen-true-rgb-google-tv?deviceVariant=Bravia+7+MK2+75+tuumainen+True+RGB+Google+TV",
+    "fixture": "shop-elisa-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 339900
+    }
+  },
+  {
+    "domain": "hifiklubben.fi",
+    "url": "https://www.hifiklubben.fi/sony-bravia-7-ii-true-rgb-tv/sonyk75xr75m2/",
+    "fixture": "shop-hifiklubben-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 339900
+    }
+  },
+  {
+    "domain": "hinta.fi",
+    "url": "https://hinta.fi/4147236/thermalright-peerless-assassin-120-se",
+    "fixture": "shop-hinta-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "aggregator",
+      "source": "adapter:hintafi",
+      "offers": 8,
+      "seller": "Datatronic",
+      "priceCents": 3490
+    }
+  },
+  {
+    "domain": "hintaopas.fi",
+    "url": "https://hintaopas.fi/product.php?p=7296866",
+    "fixture": "shop-hintaopas-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "aggregator",
+      "source": "adapter:hintaopas",
+      "offers": 11,
+      "seller": "Kärkkäinen",
+      "priceCents": 1899
+    }
+  },
+  {
+    "domain": "karkkainen.com",
+    "url": "https://www.karkkainen.com/verkkokauppa/google-tv-streamer-4k-?id=103715840",
+    "fixture": "shop-karkkainen-com.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 14999
+    }
+  },
+  {
+    "domain": "kauppa.dna.fi",
+    "url": "https://kauppa.dna.fi/tuote/p/tp-link-tapo-t315-lampotila-ja-kosketusmittari",
+    "fixture": "shop-kauppa-dna-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 3400
+    }
+  },
+  {
+    "domain": "kauppa.ykkospalvelu.fi",
+    "url": "https://kauppa.ykkospalvelu.fi/p22298-statt-avalanche-s1000-akkukayttoinen-lumentyonnin-fi.html",
+    "fixture": "shop-kauppa-ykkospalvelu-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 10358
+    }
+  },
+  {
+    "domain": "kitchenone.fi",
+    "url": "https://www.kitchenone.fi/p/vitamix-ascent-a3500i-tehosekoitin_16684/",
+    "fixture": "shop-kitchenone-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 99900
+    }
+  },
+  {
+    "domain": "maxgaming.fi",
+    "url": "https://www.maxgaming.fi/fi/mediasoittimet/google-tv-streamer-4k",
+    "fixture": "shop-maxgaming-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 11900
+    }
+  },
+  {
+    "domain": "motonet.fi",
+    "url": "https://www.motonet.fi/tuote/tp-link-tapo-h100-alyhubi?product=95-02855",
+    "fixture": "shop-motonet-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 2490
+    }
+  },
+  {
+    "domain": "multitronic.fi",
+    "url": "https://www.multitronic.fi/fi/products/4387364/kingston-nv3-500-gt-m-2-pcie-4-0-nvme--ssd-levy",
+    "fixture": "shop-multitronic-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 10990
+    }
+  },
+  {
+    "domain": "power.fi",
+    "url": "https://www.power.fi/kauneus-ja-terveys/hampaiden-hoito/sahkohammasharjat/oral-b-io3s-duo-sahkohammasharja-tuplapakkaus-matte-blackice-blue/p-2559821/",
+    "fixture": "shop-power-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 16900
+    }
+  },
+  {
+    "domain": "prisma.fi",
+    "url": "https://www.prisma.fi/tuotteet/111358363/remington-hiustenleikkuri-baldertm-original-xr7050-111358363",
+    "fixture": "shop-prisma-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 6495
+    }
+  },
+  {
+    "domain": "proshop.fi",
+    "url": "https://www.proshop.fi/SSD/Kingston-NV3-SSD-500GB-PCIe-40-M2-2280/3284681",
+    "fixture": "shop-proshop-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 9862
+    }
+  },
+  {
+    "domain": "veikonkone.fi",
+    "url": "https://www.veikonkone.fi/5901292529895-tcl-75c8l-75-4k-sqd-mini-led",
+    "fixture": "shop-veikonkone-fi.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "jsonld",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 349900
+    }
+  },
+  {
+    "domain": "verkkokauppa.com",
+    "url": "https://www.verkkokauppa.com/fi/product/954683/Kingston-NV3-PCIe-4-0-NVMe-500-Gt-M-2-SSD-kovalevy",
+    "fixture": "shop-verkkokauppa-com.html.gz",
+    "captured": "2026-11-04",
+    "expect": {
+      "kind": "shop",
+      "source": "adapter:verkkokauppa",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 11599
+    }
+  }
+]

@@ -19,6 +19,8 @@ import {
   ownLow30d,
   passesCooldown,
   type Reason,
+  bigDrops,
+  confirmDrops,
 } from "../supabase/functions/_shared/rules.ts";
 
 const DAY = 86_400_000;
@@ -242,4 +244,31 @@ test("price drop after purchase: clear drop only", () => {
   const e = buildEvent([{ rule: "price_after_purchase", level: "alert", priceCents: 29900, refCents: 34900, seller: "Power", link: "L", series: "" }], { pushMinPct: 20 })!;
   assert.equal(plain(e.headline), "Hinta laski ostoksen jälkeen: 299 €");
   assert.equal(plain(e.lines[0]), "Maksoit 349 €, nyt 50 € halvempi. Tarkista palautusoikeus tai hintatakuu.");
+});
+
+test("big drop: confirmed by the re-read, a one-off slip is replaced, otherwise retried", () => {
+  const last = new Map([["", 100000], ["Power", 50000], ["Gigantti", 80000]]);
+  const o = (seller: string | null, priceCents: number) => ({ seller, priceCents });
+  // shop page: 1000 € -> 49 € ("49 €/kk") is a big drop, 1000 € -> 950 € is not
+  assert.equal(bigDrops([o(null, 4900)], last).length, 1);
+  assert.equal(bigDrops([o(null, 95000)], last).length, 0);
+  assert.equal(bigDrops([o("Uusi kauppa", 100)], last).length, 0); // no history: nothing to compare
+
+  // same low price on the re-read -> recorded
+  let r = confirmDrops([o(null, 69900)], last, [o(null, 69900)]);
+  assert.deepEqual(r, { offers: [o(null, 69900)], unconfirmed: [] });
+  // re-read shows the normal price -> the re-read is recorded instead of the slip
+  r = confirmDrops([o(null, 4900)], last, [o(null, 99900)]);
+  assert.deepEqual(r, { offers: [o(null, 99900)], unconfirmed: [] });
+  // re-read failed -> not recorded now
+  r = confirmDrops([o(null, 4900)], last, null);
+  assert.deepEqual(r, { offers: [], unconfirmed: [o(null, 4900)] });
+  // a different low price on the re-read -> not recorded now
+  r = confirmDrops([o(null, 4900)], last, [o(null, 5900)]);
+  assert.equal(r.unconfirmed.length, 1);
+
+  // comparison page: only the big-drop seller waits; others pass unchanged
+  r = confirmDrops([o("Power", 49000), o("Gigantti", 20000)], last, [o("Power", 48000)]);
+  assert.deepEqual(r.offers, [o("Power", 49000)]);
+  assert.deepEqual(r.unconfirmed, [o("Gigantti", 20000)]);
 });

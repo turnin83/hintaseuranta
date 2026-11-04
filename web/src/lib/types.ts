@@ -55,8 +55,12 @@ export type ProductLink = {
   last_status: "ok" | "error" | "blocked" | "no_data" | null;
   last_error: string | null;
   created_at: string;
+  /** What a comparison page last showed for this shop (direct links only) */
+  xcheck?: CrossCheck | null;
   shops?: Pick<Shop, "domain" | "name" | "strategy">;
 };
+
+export type CrossCheck = { cents: number; via: string; ts: string };
 
 export type Series = {
   product_link_id: string;

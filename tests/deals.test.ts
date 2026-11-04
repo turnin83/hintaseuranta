@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assessDeal, isDeal } from "../web/src/lib/deals.ts";
+import { assessDeal, isDeal, priceMismatch } from "../web/src/lib/deals.ts";
 import type { WishSummary } from "../web/src/lib/types.ts";
 
 const item = (p: Partial<WishSummary>): WishSummary => ({
@@ -75,4 +75,16 @@ test("misleading before-price of the best offer", () => {
   const a = assessDeal(item({ best_price_cents: 5900, min_all_cents: 5900, best_claim_cents: 9900, best_own_low_cents: 5900 }), 20);
   assert.equal(a.recommendation, "consider"); // 41 % vs median would be "buy", but the shop's discount is fake
   assert.match(a.warnings[0], /^Ei oikea alennus/);
+});
+
+test("price mismatch: comparison page shows a clearly different price for the same shop", () => {
+  const now = Date.parse("2026-11-27T10:00:00Z");
+  const at = (h: number) => new Date(now - h * 3_600_000).toISOString();
+  const x = (cents: number, h: number) => ({ cents, via: "hinta.fi", ts: at(h) });
+  assert.equal(priceMismatch(4900, at(1), x(99900, 1), now)?.cents, 99900); // "49 €/kk" read as the price
+  assert.equal(priceMismatch(99900, at(1), x(97900, 1), now), null); // 2 %: aggregator lag, no note
+  assert.equal(priceMismatch(1000, at(1), x(1090, 1), now), null); // 9 % but under 1 €
+  assert.equal(priceMismatch(4900, at(1), x(99900, 9), now), null); // readings 8 h apart
+  assert.equal(priceMismatch(4900, at(40), x(99900, 40), now), null); // old
+  assert.equal(priceMismatch(4900, at(1), null, now), null);
 });

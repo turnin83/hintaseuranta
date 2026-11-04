@@ -10,7 +10,7 @@ import { IconAlert, IconExternal, IconPlus, IconRefresh } from "../components/ic
 import { TagInput } from "../components/TagInput.tsx";
 import { FindOffers } from "../components/FindOffers.tsx";
 import { setPendingDirectLink } from "../lib/direct-links.ts";
-import { assessDeal } from "../lib/deals.ts";
+import { assessDeal, priceMismatch } from "../lib/deals.ts";
 import { moveToTrash } from "../lib/trash.ts";
 import { sellerKey, sellerMatchesShop } from "@shared/search.ts";
 import { AlertEntry } from "../components/AlertEntry.tsx";
@@ -247,6 +247,7 @@ export function ItemView({ id }: { id: string }) {
               const anonLow = s.shop_strategy === "aggregator" && !s.seller;
               const claim = stale ? null : claimCheck(s.price_cents, s.lowest_30d_cents, s.own_low_30d_cents);
               const mutedRow = !anonLow && isMuted(s.seller_name);
+              const mismatch = stale || viaComparison ? null : priceMismatch(s.price_cents, s.ts, link?.xcheck);
               return (
                 <div class={`series-row${stale ? " stale" : ""}`} role="row" key={key}>
                   <span class="swatch" style={{ background: color ? `var(${color})` : "var(--line)" }} aria-hidden="true" />
@@ -269,6 +270,12 @@ export function ItemView({ id }: { id: string }) {
                       <p class="claim-warn"><IconAlert width={16} height={16} /><span>{describeClaim(claim)}</span></p>
                     )}
                     {claim?.kind === "ok" && <span class="meta">{describeClaim(claim)}</span>}
+                    {mismatch && (
+                      <p class="claim-warn">
+                        <IconAlert width={16} height={16} />
+                        <span class="num">{mismatch.via} näyttää tälle kaupalle {eur(mismatch.cents)} ({ago(mismatch.ts)}). Tarkista hinta kaupan sivulta.</span>
+                      </p>
+                    )}
                     {!claim && !stale && s.lowest_30d_cents != null && s.lowest_30d_cents > s.price_cents && (
                       <span class="meta num">Kaupan ennen-hinta {eur(s.lowest_30d_cents)} · omaa seurantaa alle viikko, ei vielä arvioitu</span>
                     )}

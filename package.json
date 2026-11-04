@@ -6,6 +6,7 @@
     "test": "node --test \"tests/**/*.test.ts\"",
     "check:functions": "npx -y deno check --config supabase/functions/deno.json supabase/functions/fetch-prices/index.ts supabase/functions/preview-product/index.ts supabase/functions/push-test/index.ts supabase/functions/probe/index.ts supabase/functions/find-offers/index.ts",
     "probe": "node scripts/probe-local.ts",
+    "shops:check": "node scripts/shop-fixtures.ts check",
     "vapid": "node scripts/generate-vapid.ts",
     "dev": "npm --prefix web run dev",
     "build": "npm --prefix web run build"

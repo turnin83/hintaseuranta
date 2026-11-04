@@ -1,6 +1,6 @@
 // Deal assessment: how good is the item's best current price compared with its own history,
 // and should we recommend buying now. Used by the Deals view and the item page.
-import type { WishSummary } from "./types.ts";
+import type { CrossCheck, WishSummary } from "./types.ts";
 // Relative path (not @shared) so the Node unit tests can import this module too.
 import { claimCheck, describeClaim, eur, meaningfulDrop } from "../../../supabase/functions/_shared/rules.ts";
 
@@ -67,6 +67,20 @@ export function assessDeal(i: WishSummary, obsCount: number): DealAssessment {
 
   const score = (discountPct ?? 0) + (targetHit ? 15 : 0) + (allTimeLow ? 10 : 0) - (warnings.length ? 10 : 0);
   return { discountPct, tier, targetHit, allTimeLow, recommendation, reasons, warnings, lowConfidence, score };
+}
+
+const HOUR = 3_600_000;
+
+/**
+ * A comparison page shows a clearly different price for the same shop (over 5 % and at least 1 €, both
+ * readings within 6 h of each other and from the last 36 h): the shop page may have been misread.
+ */
+export function priceMismatch(priceCents: number, priceTs: string, x: CrossCheck | null | undefined, now = Date.now()): CrossCheck | null {
+  if (!x) return null;
+  const t = Date.parse(x.ts);
+  if (now - t > 36 * HOUR || Math.abs(t - Date.parse(priceTs)) > 6 * HOUR) return null;
+  const diff = Math.abs(x.cents - priceCents);
+  return diff >= 100 && diff > priceCents * 0.05 ? x : null;
 }
 
 export function isDeal(d: DealAssessment): boolean {

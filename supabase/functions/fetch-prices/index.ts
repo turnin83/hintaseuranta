@@ -20,7 +20,10 @@ import { createRobotsCache, fetchPage, sleep, type RobotsCache } from "../_share
 import { extractPage } from "../_shared/extract.ts";
 import { sellerKey, sellerMatchesShop } from "../_shared/search.ts";
 import {
+  bigDrops,
+  CAMPAIGN_NIGHT_RULES,
   claimCheck,
+  confirmDrops,
   dailyMinMedian,
   describeClaim,
   eur,
@@ -40,7 +43,7 @@ import {
   type RuleName,
   type Rules,
 } from "../_shared/rules.ts";
-import type { Availability, Offer } from "../_shared/types.ts";
+import type { Availability, Offer, PageData } from "../_shared/types.ts";
 import { pushToHousehold } from "../_shared/push.ts";
 import { enrichPage } from "../_shared/enrich.ts";
 
@@ -63,6 +66,7 @@ type LinkRow = {
   sellers: string[] | null;
   fail_count: number;
   failing_since: string | null;
+  last_status: string | null;
   created_at: string;
 };
 type ShopRow = { id: number; domain: string; name: string | null; strategy: string; min_delay_ms: number };
@@ -88,7 +92,14 @@ type SeriesRow = {
   own_low_30d_cents: number | null;
 };
 
-type PendingPush = { id: number; itemId: string; itemName: string; seller: string; message: string };
+type PendingPush = {
+  id: number;
+  itemId: string;
+  itemName: string;
+  seller: string;
+  message: string;
+  urgent?: boolean; // pushed at once during campaign nights (CAMPAIGN_NIGHT_RULES)
+};
 type Ctx = {
   ok: number;
   fail: number;
@@ -370,7 +381,30 @@ async function insertEvent(
       itemName: item.name,
       seller: d.seller,
       message: d.message + (d.warning ? ` · Huom: ${d.warning}` : ""),
+      urgent: d.rules.some((r) => CAMPAIGN_NIGHT_RULES.includes(r)),
     });
+  }
+}
+
+type OtherLink = { id: string; created_at: string; shops: { domain: string; name: string | null; strategy: string } };
+
+/** The item's other active links with their shops. */
+async function otherLinks(admin: SupabaseClient, link: LinkRow): Promise<OtherLink[]> {
+  const { data } = await admin.from("product_links").select("id, created_at, shops(domain, name, strategy)")
+    .eq("wish_item_id", link.wish_item_id).eq("active", true).neq("id", link.id);
+  return (data ?? []) as unknown as OtherLink[];
+}
+
+/**
+ * Comparison page: remember what it shows for each of the item's direct shop links (product_links.xcheck).
+ * The item page flags a clearly different price, so a misread shop page is caught before buying.
+ */
+async function noteCrossChecks(admin: SupabaseClient, others: OtherLink[], pageOffers: Offer[], via: string, ts: string) {
+  for (const d of others.filter((o) => o.shops && o.shops.strategy !== "aggregator")) {
+    const o = pageOffers.find((x) =>
+      x.seller && x.priceCents != null && x.availability !== "out_of_stock" && sellerMatchesShop(x.seller, d.shops)
+    );
+    if (o) await admin.from("product_links").update({ xcheck: { cents: o.priceCents, via, ts } }).eq("id", d.id);
   }
 }
 
@@ -379,12 +413,9 @@ async function insertEvent(
  * earlier comparison link) so one price change is not recorded and alerted twice. The link's seller
  * selection is updated so the exclusion sticks; history is kept.
  */
-async function dropDuplicateSellers(admin: SupabaseClient, link: LinkRow, offers: Offer[]): Promise<Offer[]> {
+async function dropDuplicateSellers(admin: SupabaseClient, link: LinkRow, offers: Offer[], others: OtherLink[]): Promise<Offer[]> {
   const sellers = offers.map((o) => o.seller).filter((s): s is string => Boolean(s));
   if (sellers.length === 0) return offers;
-  const { data } = await admin.from("product_links").select("id, created_at, shops(domain, name, strategy)")
-    .eq("wish_item_id", link.wish_item_id).eq("active", true).neq("id", link.id);
-  const others = (data ?? []) as unknown as { id: string; created_at: string; shops: { domain: string; name: string | null; strategy: string } }[];
   const direct = others.filter((o) => o.shops?.strategy !== "aggregator").map((o) => o.shops);
   const earlierAgg = others.filter((o) => o.shops?.strategy === "aggregator" && o.created_at < link.created_at).map((o) => o.id);
   let earlierKeys = new Set<string>();
@@ -397,6 +428,31 @@ async function dropDuplicateSellers(admin: SupabaseClient, link: LinkRow, offers
   const keep = (link.sellers ?? sellers).filter((s) => !dupes.has(s) && ![...dupes].some((d) => sellerKey(d) === sellerKey(s)));
   await admin.from("product_links").update(keep.length ? { sellers: keep } : { active: false }).eq("id", link.id);
   return offers.filter((o) => o.seller && !dupes.has(o.seller));
+}
+
+type ReadResult =
+  | { ok: true; page: PageData; offers: Offer[] }
+  | { ok: false; status: "error" | "blocked" | "no_data"; error: string };
+
+/** Reads the link's page: the offers to record (comparison page: the selected sellers; shop: its price). */
+async function readOffers(link: LinkRow, robots: RobotsCache): Promise<ReadResult> {
+  const f = await fetchPage(link.url, robots);
+  if (f.blocked) return { ok: false, status: "blocked", error: `Bot protection: ${f.botMarkers.join(", ")}` };
+  if (f.error) return { ok: false, status: "error", error: f.error };
+
+  const parsed = extractPage(f.html, link.url);
+  const page = parsed ? await enrichPage(parsed, link.url) : null;
+  if (!page || page.offers.length === 0) {
+    return { ok: false, status: "no_data", error: "No price found (no Product JSON-LD / adapter data)" };
+  }
+  let offers = page.offers;
+  if (page.kind === "aggregator" && link.sellers?.length) {
+    const wanted = new Set(link.sellers.map(sellerKey));
+    offers = offers.filter((o) => o.seller && wanted.has(sellerKey(o.seller)));
+    if (offers.length === 0) return { ok: false, status: "no_data", error: `Selected sellers not listed: ${link.sellers.join(", ")}` };
+  }
+  if (page.kind === "shop") offers = offers.slice(0, 1).map((o) => ({ ...o, seller: null }));
+  return { ok: true, page, offers };
 }
 
 /** Fetches one link, stores observations and collects shop-level reasons. Returns true on success. */
@@ -439,22 +495,15 @@ async function processLink(
     return false;
   };
 
-  const f = await fetchPage(link.url, robots);
-  if (f.blocked) return fail("blocked", `Bot protection: ${f.botMarkers.join(", ")}`);
-  if (f.error) return fail("error", f.error);
-
-  const parsed = extractPage(f.html, link.url);
-  const page = parsed ? await enrichPage(parsed, link.url) : null;
-  if (!page || page.offers.length === 0) return fail("no_data", "No price found (no Product JSON-LD / adapter data)");
-
-  let offers = page.offers;
-  if (page.kind === "aggregator" && link.sellers?.length) {
-    const wanted = new Set(link.sellers.map(sellerKey));
-    offers = offers.filter((o) => o.seller && wanted.has(sellerKey(o.seller)));
-    if (offers.length === 0) return fail("no_data", `Selected sellers not listed: ${link.sellers.join(", ")}`);
+  const read = await readOffers(link, robots);
+  if (!read.ok) return fail(read.status, read.error);
+  const page = read.page;
+  let offers = read.offers;
+  if (page.kind === "aggregator") {
+    const others = await otherLinks(admin, link);
+    await noteCrossChecks(admin, others, page.offers, shop.name || shop.domain, now);
+    offers = await dropDuplicateSellers(admin, link, offers, others);
   }
-  if (page.kind === "aggregator") offers = await dropDuplicateSellers(admin, link, offers);
-  if (page.kind === "shop") offers = offers.slice(0, 1).map((o) => ({ ...o, seller: null }));
 
   // History per series before this observation (own 30-day low + shop rules).
   const histories = new Map<string, Obs[]>();
@@ -466,6 +515,24 @@ async function processLink(
       .order("ts", { ascending: false }).limit(HISTORY_LIMIT);
     if (error) throw error;
     histories.set(seller, ((hist ?? []) as ObsRow[]).map(toObs));
+  }
+
+  // A big drop is read again before it is recorded. Unconfirmed ones leave the link due, so the next
+  // tick (15 min) tries again; fail_count (with status "ok") counts those tries, and after 3 the price
+  // is recorded as read.
+  const lastCents = new Map([...histories].filter(([, h]) => h.length > 0).map(([k, h]) => [k, h[0].priceCents]));
+  const pendingTries = link.last_status === "ok" ? link.fail_count : 0;
+  let unconfirmed: Offer[] = [];
+  if (pendingTries < 3 && bigDrops(offers, lastCents).length) {
+    await sleep(shop.min_delay_ms);
+    const again = await readOffers(link, robots);
+    ({ offers, unconfirmed } = confirmDrops(offers, lastCents, again.ok ? again.offers : null));
+    if (unconfirmed.length) {
+      ctx.errors.push({
+        url: link.url,
+        error: `Big drop not confirmed on re-read (${unconfirmed.map((o) => eur(o.priceCents!)).join(", ")}), retrying`,
+      });
+    }
   }
 
   const rows = offers.map((o) => ({
@@ -511,10 +578,9 @@ async function processLink(
 
   ctx.ok++;
   await admin.from("product_links").update({
-    last_fetched_at: now,
+    ...(unconfirmed.length ? { fail_count: pendingTries + 1 } : { last_fetched_at: now, fail_count: 0 }),
     last_status: "ok",
     last_error: null,
-    fail_count: 0,
     failing_since: null,
     claimed_until: null,
     ...(link.ean == null && page.ean ? { ean: page.ean } : {}),
@@ -607,9 +673,19 @@ async function evaluateItem(
   if (draft) await insertEvent(admin, ctx, item, draft, reasons, null);
 }
 
+/** Name of a campaign running today in the household's time zone, if any. */
+async function runningCampaign(admin: SupabaseClient, h: HouseholdRow): Promise<string | null> {
+  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: h.timezone }).format(new Date()); // YYYY-MM-DD
+  const { data } = await admin.from("campaigns").select("name")
+    .eq("household_id", h.id).eq("active", true).lte("starts_on", today).gte("ends_on", today)
+    .limit(1).maybeSingle();
+  return (data?.name as string | undefined) ?? null;
+}
+
 /**
- * Quiet hours: new alerts are marked deferred and not pushed. Otherwise deferred alerts from the last
- * 24 h are delivered together with the new ones as one morning summary.
+ * Quiet hours: new alerts are marked deferred and not pushed, except target / all-time-low alerts while a
+ * campaign runs (deals often start at midnight and sell out by morning). Otherwise deferred alerts from
+ * the last 24 h are delivered together with the new ones as one morning summary.
  */
 async function deliverPushes(
   admin: SupabaseClient,
@@ -619,7 +695,16 @@ async function deliverPushes(
   ctx: { errors: { url: string; error: string }[] },
 ) {
   if (inQuietHours(household)) {
-    if (fresh.length) await admin.from("alert_events").update({ push_deferred: true }).in("id", fresh.map((a) => a.id));
+    const urgent = fresh.some((a) => a.urgent) && household && (await runningCampaign(admin, household))
+      ? fresh.filter((a) => a.urgent)
+      : [];
+    const later = fresh.filter((a) => !urgent.includes(a));
+    if (later.length) await admin.from("alert_events").update({ push_deferred: true }).in("id", later.map((a) => a.id));
+    if (urgent.length) {
+      const res = await sendAlertPushes(admin, householdId, urgent);
+      if (res.sent > 0) await admin.from("alert_events").update({ push_sent: true }).in("id", urgent.map((a) => a.id));
+      if (res.errors.length) ctx.errors.push(...res.errors.map((e) => ({ url: "push", error: e })));
+    }
     return;
   }
   const { data: deferredRows } = await admin.from("alert_events")

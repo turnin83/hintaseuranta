@@ -5,9 +5,9 @@ import { ago, dateTime } from "../lib/format.ts";
 import { dataVersion, session, toast } from "../lib/store.ts";
 import { currentSubscription, disablePush, enablePush, platform } from "../lib/push.ts";
 import { TopBar } from "../components/chrome.tsx";
-import { IconShare, IconTrash } from "../components/icons.tsx";
+import { IconAlert, IconShare, IconTrash } from "../components/icons.tsx";
 import { versionLabel } from "../lib/version.ts";
-import { type Campaign, fiDate, intervalLabel, isRunning, refreshCampaigns, today } from "../lib/campaigns.ts";
+import { type Campaign, fiDate, intervalLabel, isRunning, refreshCampaigns, runningCampaign, today } from "../lib/campaigns.ts";
 import { restoreItem, TRASH_DAYS } from "../lib/trash.ts";
 import type { WishSummary } from "../lib/types.ts";
 import { eur } from "../lib/format.ts";
@@ -157,7 +157,10 @@ function QuietHoursSection() {
           </label>
         </div>
       )}
-      <p class="meta">Hiljaisina tunteina syntyneet hälytykset tulevat aamulla yhtenä ilmoituksena. Hinnat haetaan silti normaalisti.</p>
+      <p class="meta">
+        Hiljaisina tunteina syntyneet hälytykset tulevat aamulla yhtenä ilmoituksena. Hinnat haetaan silti normaalisti.
+        Kampanjoiden aikana tavoitehinnan alitus ja uusi alin hinta ilmoitetaan heti myös yöllä, koska tarjoukset alkavat usein keskiyöllä.
+      </p>
     </section>
   );
 }
@@ -366,6 +369,33 @@ function ShopsSection() {
   );
 }
 
+/** One line: is collection working? Same limits as the GitHub watchdog (3 h in a campaign, else 26 h). */
+function FetchHealth() {
+  const [h, setH] = useState<{ lastOk: string | null; broken: number } | null>(null);
+  useEffect(() => {
+    Promise.all([
+      supabase.from("product_links").select("last_fetched_at").eq("last_status", "ok")
+        .order("last_fetched_at", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("product_links").select("id, wish_items!inner(deleted_at)", { count: "exact", head: true })
+        .eq("active", true).not("failing_since", "is", null).is("wish_items.deleted_at", null),
+    ]).then(([last, broken]) => setH({ lastOk: last.data?.last_fetched_at ?? null, broken: broken.count ?? 0 }));
+  }, [dataVersion.value]);
+  if (!h) return null;
+  const c = runningCampaign.value;
+  const stale = !h.lastOk || Date.now() - Date.parse(h.lastOk) > (c ? 3 : 26) * 3_600_000;
+  const warn = stale || h.broken > 0;
+  return (
+    <p class={warn ? "claim-warn" : "meta"}>
+      {warn && <IconAlert width={16} height={16} />}
+      <span>
+        {h.lastOk ? `Viimeisin onnistunut haku ${ago(h.lastOk)}` : "Ei vielä onnistuneita hakuja"}
+        {h.broken === 0 ? " · kaikki linkit toimivat" : h.broken === 1 ? " · 1 linkki ei toimi" : ` · ${h.broken} linkkiä ei toimi`}
+        {c ? ` · ${c.name} käynnissä, haku ${intervalLabel(c.fetch_interval_minutes)}` : ""}
+      </span>
+    </p>
+  );
+}
+
 function RunsSection() {
   const [runs, setRuns] = useState<FetchRun[]>([]);
   useEffect(() => {
@@ -377,6 +407,7 @@ function RunsSection() {
   return (
     <section class="section" aria-labelledby="h-runs">
       <h2 id="h-runs">Viimeisimmät haut</h2>
+      <FetchHealth />
       <div>
         {runs.map((r) => (
           <details class="panel" key={r.id}>

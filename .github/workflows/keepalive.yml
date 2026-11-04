@@ -1,23 +1,25 @@
 # Keepalive + health watchdog.
-# - Free Supabase projects are paused after ~7 days without activity; this makes one API request a day.
-# - If the project does not answer, or no link has been fetched successfully for 26 h, the job fails and
-#   GitHub e-mails the repository owner (Settings -> Notifications -> Actions: failed workflows).
+# - Free Supabase projects are paused after ~7 days without activity; every run makes one API request.
+# - Runs hourly. While a shopping campaign runs (health().campaign_running) every run checks and allows
+#   3 h without a successful fetch; otherwise only the 05 and 17 UTC runs check, allowing 26 h.
+# - On failure GitHub e-mails the repository owner (Settings -> Notifications -> Actions: failed workflows).
 # Requires repository secrets SUPABASE_URL and SUPABASE_ANON_KEY (public key; health() returns only
-# timestamps and counts).
+# timestamps, counts and a flag).
 name: Supabase keepalive & health
 on:
   schedule:
-    - cron: "23 5 * * *"
-    - cron: "23 17 * * *"
+    - cron: "23 * * * *"
   workflow_dispatch:
 jobs:
   health:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check collection health
         env:
           URL: ${{ secrets.SUPABASE_URL }}
           KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           body=$(curl -sS -m 30 -X POST "$URL/rest/v1/rpc/health" \
             -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{}') || {
@@ -25,9 +27,15 @@ jobs:
           echo "health: $body"
           last=$(echo "$body" | jq -r '.last_ok_fetch // empty')
           broken=$(echo "$body" | jq -r '.broken_links // 0')
+          campaign=$(echo "$body" | jq -r '.campaign_running // false')
           if [ -z "$last" ]; then echo "::error::Unexpected response (project paused?)"; exit 1; fi
+          hour=$(date -u +%H)
+          if [ "$campaign" != "true" ] && [ "$MANUAL" != "true" ] && [ "$hour" != "05" ] && [ "$hour" != "17" ]; then
+            echo "no campaign running: keepalive only"; exit 0
+          fi
+          limit=26; [ "$campaign" = "true" ] && limit=3
           age_h=$(( ( $(date +%s) - $(date -d "$last" +%s) ) / 3600 ))
-          echo "last successful fetch ${age_h} h ago, broken links: ${broken}"
-          if [ "$age_h" -gt 26 ]; then
+          echo "last successful fetch ${age_h} h ago (limit ${limit} h), broken links: ${broken}, campaign: ${campaign}"
+          if [ "$age_h" -ge "$limit" ]; then
             echo "::error::No successful price fetch for ${age_h} h - check Supabase (cron, functions, pause)"; exit 1
           fi
