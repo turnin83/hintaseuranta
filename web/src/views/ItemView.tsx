@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { invoke, supabase } from "../lib/supabase.ts";
 import type { AlertEvent, ProductLink, Series, WishSummary } from "../lib/types.ts";
-import { AVAILABILITY, PRIORITY, ago, centsToInput, dateTime, eur, hostOf, parseEurInput } from "../lib/format.ts";
+import { AVAILABILITY, PRIORITY, ago, centsToInput, eur, hostOf, parseEurInput } from "../lib/format.ts";
 import { go } from "../lib/router.ts";
 import { dataVersion, refreshUnread, toast } from "../lib/store.ts";
 import { TopBar } from "../components/chrome.tsx";
 import { PriceChart, type ChartPoint, type ChartSeries } from "../components/PriceChart.tsx";
-import { IconExternal, IconPlus, IconRefresh } from "../components/icons.tsx";
+import { IconAlert, IconExternal, IconPlus, IconRefresh } from "../components/icons.tsx";
 import { TagInput } from "../components/TagInput.tsx";
 import { FindOffers } from "../components/FindOffers.tsx";
 import { setPendingDirectLink } from "../lib/direct-links.ts";
 import { assessDeal } from "../lib/deals.ts";
 import { moveToTrash } from "../lib/trash.ts";
-import { sellerMatchesShop } from "@shared/search.ts";
+import { sellerKey, sellerMatchesShop } from "@shared/search.ts";
+import { AlertEntry } from "../components/AlertEntry.tsx";
 import type { Shop } from "../lib/types.ts";
-import { AFTER_PURCHASE_DAYS, diffRules, mergeRules, RULE_LABELS, type RuleName, type Rules } from "@shared/rules.ts";
+import { AFTER_PURCHASE_DAYS, claimCheck, describeClaim, diffRules, mergeRules, type Rules } from "@shared/rules.ts";
 import { RulesForm, rulesSummary } from "../components/RulesForm.tsx";
 
 const RANGES = [
@@ -29,6 +30,7 @@ export function ItemView({ id }: { id: string }) {
   const [links, setLinks] = useState<ProductLink[]>([]);
   const [series, setSeries] = useState<Series[]>([]);
   const [shops, setShops] = useState<Shop[]>([]);
+  const [household, setHousehold] = useState<{ id: string; muted_sellers: string[] } | null>(null);
   const [points, setPoints] = useState<ChartPoint[]>([]);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("30");
@@ -53,6 +55,7 @@ export function ItemView({ id }: { id: string }) {
       setLinks((ls.data ?? []) as ProductLink[]);
       setSeries((se.data ?? []) as Series[]);
       supabase.from("shops").select("*").then(({ data }) => setShops((data ?? []) as Shop[]));
+      supabase.from("households").select("id, muted_sellers").maybeSingle().then(({ data }) => setHousehold(data));
       setAlerts((al.data ?? []) as AlertEvent[]);
       if ((al.data ?? []).some((a) => !a.read)) {
         await supabase.rpc("mark_alerts_read", { p_wish_item: id });
@@ -121,6 +124,18 @@ export function ItemView({ id }: { id: string }) {
     );
   // A price older than 36 h is not current (seller gone from the comparison page, shop page gives no price).
   const isStale = (s: Series) => Date.now() - Date.parse(s.ts) > 36 * 3_600_000;
+  const muted = household?.muted_sellers ?? [];
+  const isMuted = (name: string) => muted.some((m) => sellerKey(m) === sellerKey(name) || sellerMatchesShop(name, { domain: m, name: m }));
+  const toggleMute = async (name: string) => {
+    if (!household) return;
+    const next = isMuted(name)
+      ? muted.filter((m) => !(sellerKey(m) === sellerKey(name) || sellerMatchesShop(name, { domain: m, name: m })))
+      : [...muted, name];
+    const { error } = await supabase.from("households").update({ muted_sellers: next }).eq("id", household.id);
+    if (error) return toast(error.message);
+    setHousehold({ ...household, muted_sellers: next });
+    toast(next.length > muted.length ? `${name}: ei hälytyksiä tästä kaupasta` : `${name}: hälytykset taas käytössä`);
+  };
   const staleReason = (s: Series) => {
     const l = linkById.get(s.product_link_id);
     if (s.seller) return `ei enää listalla: ${l?.shops?.name ?? s.domain}`;
@@ -172,6 +187,9 @@ export function ItemView({ id }: { id: string }) {
                   {deal.reasons.join(", ")}{deal.lowConfidence ? " (vähän historiaa)" : ""}
                 </p>
               )}
+              {deal.warnings.map((w) => (
+                <p class="claim-warn" key={w}><IconAlert width={16} height={16} /><span>{w}</span></p>
+              ))}
             </>
           ) : (
             <span class="muted">{links.length ? "Ei hintatietoa vielä." : "Lisää ensimmäinen linkki, niin hinnan seuranta alkaa."}</span>
@@ -218,13 +236,18 @@ export function ItemView({ id }: { id: string }) {
               const link = linkById.get(s.product_link_id);
               const viaComparison = Boolean(s.seller);
               const siteName = link?.shops?.name ?? s.domain;
+              // A comparison page that only tells its lowest price, not the shop.
+              const anonLow = s.shop_strategy === "aggregator" && !s.seller;
+              const claim = stale ? null : claimCheck(s.price_cents, s.lowest_30d_cents, s.own_low_30d_cents);
+              const mutedRow = !anonLow && isMuted(s.seller_name);
               return (
                 <div class={`series-row${stale ? " stale" : ""}`} role="row" key={key}>
                   <span class="swatch" style={{ background: color ? `var(${color})` : "var(--line)" }} aria-hidden="true" />
                   <div class="who" role="cell">
                     <div class="who-name">
-                      <strong>{s.seller_name}</strong>
+                      <strong>{anonLow ? `${siteName}: alin hinta` : s.seller_name}</strong>
                       {key === cheapestKey && <span class="chip good">Halvin nyt</span>}
+                      {mutedRow && <span class="chip neutral">ei hälytyksiä</span>}
                     </div>
                     {stale ? (
                       <span class="meta">Vanha hinta ({ago(s.ts)}) · {staleReason(s)}</span>
@@ -232,16 +255,21 @@ export function ItemView({ id }: { id: string }) {
                       <span class="meta">
                         {s.availability !== "unknown" ? `${AVAILABILITY[s.availability]} · ` : ""}alin {eur(s.min_all)} · {ago(s.ts)}
                         {viaComparison ? ` · via ${s.domain}` : ""}
+                        {anonLow ? " · kauppa ei tiedossa, ei hälytyksiä" : ""}
                       </span>
+                    )}
+                    {claim && claim.kind !== "ok" && (
+                      <p class="claim-warn"><IconAlert width={16} height={16} /><span>{describeClaim(claim)}</span></p>
+                    )}
+                    {claim?.kind === "ok" && <span class="meta">{describeClaim(claim)}</span>}
+                    {!claim && !stale && s.lowest_30d_cents != null && s.lowest_30d_cents > s.price_cents && (
+                      <span class="meta num">Kaupan ennen-hinta {eur(s.lowest_30d_cents)} · omaa seurantaa alle viikko, ei vielä arvioitu</span>
                     )}
                   </div>
                   <div class="val" role="cell">
                     <strong class="num">{eur(s.price_cents)}</strong>
                     {s.shipping_cents != null && (
                       <div class="meta num">{s.shipping_cents === 0 ? "ilmainen toimitus" : `toimitettuna ${eur(s.price_cents + s.shipping_cents)}`}</div>
-                    )}
-                    {s.lowest_30d_cents != null && (
-                      <div class="meta num">ilmoitettu {eur(s.lowest_30d_cents)}</div>
                     )}
                   </div>
                   <div class="series-actions">
@@ -266,6 +294,11 @@ export function ItemView({ id }: { id: string }) {
                         Lisää suora linkki
                       </a>
                     )}
+                    {!anonLow && household && (
+                      <button class="btn small ghost" onClick={() => toggleMute(s.seller_name)}>
+                        {mutedRow ? "Hälytä taas" : "Älä hälytä"}
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -279,13 +312,9 @@ export function ItemView({ id }: { id: string }) {
           <h2 id="h-alerts">Hälytykset</h2>
           <div class="stack-sm">
             {alerts.map((a) => (
-              <div key={a.id} class={`alert-row ${a.read ? "read" : "unread"} ${a.level}`}>
+              <div key={a.id} class={`alert-row ${a.read ? "read" : "unread"}`}>
                 <span class="dot" aria-hidden="true" />
-                <div>
-                  <div class="title">{RULE_LABELS[a.rule as RuleName] ?? a.rule}{a.read ? "" : " (uusi)"}</div>
-                  <div class="muted">{a.seller ? `${a.seller}: ` : ""}{a.message}</div>
-                  <div class="meta">{dateTime(a.ts)}</div>
-                </div>
+                <AlertEntry alert={a} />
               </div>
             ))}
           </div>

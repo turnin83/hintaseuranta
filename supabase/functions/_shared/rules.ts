@@ -1,9 +1,13 @@
-// Alert rules. Pure functions.
+// Alert rules. Pure functions, shared by fetch-prices and the web app.
 //
-// Item level (one alert per product, evaluated on the item's best current price across all shops):
-//   below_target, all_time_low, below_median
-// Series level (one shop / seller): drop, back_in_stock — by default only when that shop is now the
-// cheapest for the item — and suspicious_discount (info, no push).
+// Item level (evaluated once per run on the item's best current price across shops):
+//   below_target, below_median — state based: they fire when the price enters the state, and again only
+//   when it falls meaningfully further or leaves and re-enters the state (never just because time passed).
+//   all_time_low — a new low that is meaningfully below the previous one.
+// Series level (one shop / seller): drop, back_in_stock — by default only when that shop is the cheapest
+// afterwards; a drop back to a price seen in the last 7 days is a bounce, not an alert.
+// Everything one run finds for an item becomes ONE event (buildEvent) with a headline, reasons and an
+// optional warning; whether it is pushed depends on how significant it is (push_min_pct).
 //
 // Rules are merged DEFAULT_RULES <- household defaults <- item overrides; items store only overrides.
 import type { Availability } from "./types.ts";
@@ -14,11 +18,9 @@ export type RuleName =
   | "below_median"
   | "drop"
   | "back_in_stock"
-  | "suspicious_discount"
+  | "suspicious_discount" // legacy rows only; shown now as a price note, not an alert
   | "price_after_purchase"
   | "link_broken";
-
-export const ITEM_RULES: RuleName[] = ["below_target", "all_time_low", "below_median"];
 
 export type Rules = {
   below_target: boolean;
@@ -26,9 +28,11 @@ export type Rules = {
   below_median: { enabled: boolean; pct: number };
   drop: { enabled: boolean; pct: number };
   back_in_stock: boolean;
-  suspicious: boolean;
   /** drop / back_in_stock only when the shop is (one of) the cheapest for the item afterwards */
   only_cheapest: boolean;
+  /** push when a discount (below usual price / drop) is at least this; smaller ones go to the list only */
+  push_min_pct: number;
+  /** a shop's drop / back-in-stock repeats at the earliest after this, unless the price falls further */
   cooldown_hours: number;
 };
 
@@ -38,8 +42,8 @@ export const DEFAULT_RULES: Rules = {
   below_median: { enabled: true, pct: 10 },
   drop: { enabled: true, pct: 5 },
   back_in_stock: true,
-  suspicious: true,
   only_cheapest: true,
+  push_min_pct: 20,
   cooldown_hours: 24,
 };
 
@@ -64,8 +68,8 @@ export function mergeRules(...layers: unknown[]): Rules {
       below_median: { ...r.below_median, ...(p.below_median ?? {}) },
       drop: { ...r.drop, ...(p.drop ?? {}) },
       back_in_stock: p.back_in_stock ?? r.back_in_stock,
-      suspicious: p.suspicious ?? r.suspicious,
       only_cheapest: p.only_cheapest ?? r.only_cheapest,
+      push_min_pct: p.push_min_pct ?? r.push_min_pct,
       cooldown_hours: p.cooldown_hours ?? r.cooldown_hours,
     };
   }
@@ -99,6 +103,15 @@ export type AlertCandidate = {
 
 const DAY = 86_400_000;
 const UNAVAILABLE: Availability[] = ["out_of_stock"];
+
+/** A change worth telling: at least 1 € and 1 %. */
+export function meaningfulDrop(fromCents: number, toCents: number): boolean {
+  return fromCents - toCents >= 100 && toCents <= fromCents * 0.99;
+}
+
+export function pctBelow(priceCents: number, refCents: number): number {
+  return Math.round((1 - priceCents / refCents) * 100);
+}
 
 export function median(values: number[]): number | null {
   if (values.length === 0) return null;
@@ -135,26 +148,46 @@ export type ItemState = {
   targetCents: number | null;
 };
 
-export function evaluateItemRules(s: ItemState, rules: Rules): AlertCandidate[] {
-  const out: AlertCandidate[] = [];
+type StateEntry = { on: boolean; last: number | null };
+/** Stored per item (wish_items.alert_state); null = never evaluated (first run only records it). */
+export type ItemAlertState = { below_target?: StateEntry; below_median?: StateEntry };
+
+export function evaluateItemRules(
+  s: ItemState,
+  rules: Rules,
+  prev: ItemAlertState | null,
+): { candidates: AlertCandidate[]; next: ItemAlertState } {
+  const candidates: AlertCandidate[] = [];
+  const next: ItemAlertState = { ...(prev ?? {}) };
   const p = s.bestCents;
-  if (p == null) return out;
-  if (rules.below_target && s.targetCents != null && p <= s.targetCents) {
-    out.push({ rule: "below_target", level: "alert", priceCents: p, refCents: s.targetCents });
-  }
+  if (p == null) return { candidates, next };
+
+  // Fires on entering the state, or when the price falls meaningfully below the last alerted price.
+  const stateRule = (key: keyof ItemAlertState, active: boolean, ref: number | null) => {
+    const was = prev?.[key];
+    if (!active) {
+      next[key] = { on: false, last: was?.last ?? null };
+      return;
+    }
+    const fire = prev != null && (!was?.on || (was.last != null && meaningfulDrop(was.last, p)));
+    next[key] = { on: true, last: fire || was?.last == null ? p : was.last };
+    if (fire) candidates.push({ rule: key as RuleName, level: "alert", priceCents: p, refCents: ref });
+  };
+
+  stateRule("below_target", rules.below_target && s.targetCents != null && p <= s.targetCents, s.targetCents);
+  stateRule(
+    "below_median",
+    rules.below_median.enabled && s.medianCents != null && s.medianDays >= 3 &&
+      p <= s.medianCents * (1 - rules.below_median.pct / 100),
+    s.medianCents,
+  );
   if (
     rules.all_time_low.enabled && s.prevMinCents != null && s.prevObsCount + 1 >= rules.all_time_low.min_obs &&
-    p < s.prevMinCents
+    meaningfulDrop(s.prevMinCents, p)
   ) {
-    out.push({ rule: "all_time_low", level: "alert", priceCents: p, refCents: s.prevMinCents });
+    candidates.push({ rule: "all_time_low", level: "alert", priceCents: p, refCents: s.prevMinCents });
   }
-  if (
-    rules.below_median.enabled && s.medianCents != null && s.medianDays >= 3 &&
-    p <= s.medianCents * (1 - rules.below_median.pct / 100)
-  ) {
-    out.push({ rule: "below_median", level: "alert", priceCents: p, refCents: s.medianCents });
-  }
-  return out;
+  return { candidates, next };
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +214,15 @@ export function evaluateSeriesRules(args: {
   const cheapest = args.othersBestCents == null || price <= args.othersBestCents;
   const relevant = !rules.only_cheapest || cheapest;
 
-  if (available && relevant && rules.drop.enabled && prev && price <= prev.priceCents * (1 - rules.drop.pct / 100)) {
+  // A drop back to a price this shop already had during the last 7 days is a bounce (e.g. a raise before
+  // a "sale"), not a new opportunity.
+  const recentLow = Math.min(...history.filter((o) => o.ts >= current.ts - 7 * DAY).map((o) => o.priceCents));
+  const bounce = Number.isFinite(recentLow) && recentLow <= price;
+
+  if (
+    available && relevant && !bounce && rules.drop.enabled && prev &&
+    price <= prev.priceCents * (1 - rules.drop.pct / 100) && meaningfulDrop(prev.priceCents, price)
+  ) {
     out.push({ rule: "drop", level: "alert", priceCents: price, refCents: prev.priceCents });
   }
   if (
@@ -190,18 +231,52 @@ export function evaluateSeriesRules(args: {
   ) {
     out.push({ rule: "back_in_stock", level: "alert", priceCents: price, refCents: null });
   }
-
-  // Shop claims a discount, but our own 30-day history already had the same or a lower price.
-  const last30 = history.filter((o) => o.ts >= current.ts - 30 * DAY);
-  if (rules.suspicious && current.lowest30dCents != null && current.lowest30dCents > price && last30.length >= 3) {
-    const spanDays = (current.ts - last30[0].ts) / DAY;
-    const ownMin = Math.min(...last30.map((o) => o.priceCents));
-    if (spanDays >= 7 && ownMin <= price) {
-      out.push({ rule: "suspicious_discount", level: "info", priceCents: price, refCents: ownMin });
-    }
-  }
   return out;
 }
+
+/** Our own lowest price for a series in the 30 days before `current` (null with under 7 days of data). */
+export function ownLow30d(history: Obs[], currentTs: number): number | null {
+  const last30 = history.filter((o) => o.ts >= currentTs - 30 * DAY && o.ts < currentTs);
+  if (last30.length < 3) return null;
+  const span = (currentTs - Math.min(...last30.map((o) => o.ts))) / DAY;
+  return span >= 7 ? Math.min(...last30.map((o) => o.priceCents)) : null;
+}
+
+// ---------------------------------------------------------------------------
+// Shop's "before" price vs our own history
+// ---------------------------------------------------------------------------
+
+export type ClaimVerdict = {
+  kind: "fake" | "exaggerated" | "ok";
+  claimCents: number; // shop's "before" / lowest-30-days price
+  ownLowCents: number; // our lowest price in the 30 days before
+  claimPct: number; // discount the shop advertises
+  realPct: number; // discount compared with our own history (0 = none)
+};
+
+export function claimCheck(priceCents: number, claimCents: number | null, ownLowCents: number | null): ClaimVerdict | null {
+  if (claimCents == null || ownLowCents == null || claimCents <= priceCents) return null;
+  const claimPct = pctBelow(priceCents, claimCents);
+  if (ownLowCents <= priceCents) return { kind: "fake", claimCents, ownLowCents, claimPct, realPct: 0 };
+  if (ownLowCents < claimCents * 0.97) {
+    return { kind: "exaggerated", claimCents, ownLowCents, claimPct, realPct: pctBelow(priceCents, ownLowCents) };
+  }
+  return { kind: "ok", claimCents, ownLowCents, claimPct, realPct: claimPct };
+}
+
+export function describeClaim(v: ClaimVerdict): string {
+  if (v.kind === "fake") {
+    return `Ei oikea alennus: kauppa ilmoittaa ennen-hinnaksi ${eur(v.claimCents)} (−${v.claimPct} %), mutta hinta oli ${eur(v.ownLowCents)} jo 30 päivän sisällä.`;
+  }
+  if (v.kind === "exaggerated") {
+    return `Alennus liioiteltu: kauppa −${v.claimPct} % (ennen ${eur(v.claimCents)}), oikeasti −${v.realPct} % (alin 30 pv ${eur(v.ownLowCents)}).`;
+  }
+  return `Kaupan ennen-hinta ${eur(v.claimCents)} täsmää seurantaan.`;
+}
+
+// ---------------------------------------------------------------------------
+// Purchased items
+// ---------------------------------------------------------------------------
 
 /** Days a purchased item is still watched for a price drop (return right / price guarantee). */
 export const AFTER_PURCHASE_DAYS = 30;
@@ -217,12 +292,16 @@ export function evaluateAfterPurchase(bestCents: number | null, paidCents: numbe
   return { rule: "price_after_purchase", level: "alert", priceCents: bestCents, refCents: paidCents };
 }
 
-/** Cooldown: the same rule fires again only if the price fell further or the cooldown has passed. */
+/** Cooldown for shop-level rules: again only if the price fell further or the cooldown has passed. */
 export function passesCooldown(c: AlertCandidate, prev: PrevAlert | undefined, now: number, cooldownHours: number) {
   if (!prev) return true;
   if (c.priceCents < prev.priceCents) return true;
   return now - prev.ts >= cooldownHours * 3_600_000;
 }
+
+// ---------------------------------------------------------------------------
+// One readable event per item and run
+// ---------------------------------------------------------------------------
 
 // Deterministic Finnish euro format (ICU output varies between runtimes): 1299.9 -> "1 299,90 €".
 // Spaces are non-breaking so an amount never wraps across lines.
@@ -233,27 +312,126 @@ export function eur(cents: number): string {
   return `${cents < 0 ? "-" : ""}${whole}${frac ? "," + String(frac).padStart(2, "0") : ""}${NBSP}€`;
 }
 
-export function describeAlert(c: AlertCandidate): string {
-  const p = eur(c.priceCents);
-  const r = c.refCents != null ? eur(c.refCents) : "";
-  switch (c.rule) {
-    case "below_target":
-      return `${p}, alle tavoitehinnan ${r}`;
-    case "all_time_low":
-      return `${p}, uusi alin hinta (aiempi alin ${r})`;
-    case "below_median":
-      return `${p}, ${Math.round((1 - c.priceCents / c.refCents!) * 100)} % alle 30 pv mediaanin ${r}`;
-    case "drop":
-      return `${p}, laski ${Math.round((1 - c.priceCents / c.refCents!) * 100)} % (oli ${r})`;
-    case "back_in_stock":
-      return `Taas saatavilla, ${p}`;
-    case "suspicious_discount":
-      return `Kauppa ilmoittaa alennuksen, mutta hinta oli 30 pv sisällä jo ${r}`;
+/** One reason found in a run; link/series identify it for cooldowns. */
+export type Reason = AlertCandidate & { seller: string; link: string; series: string };
+
+export type EventDraft = {
+  rule: RuleName; // primary reason
+  rules: RuleName[];
+  priceCents: number;
+  refCents: number | null;
+  seller: string;
+  link: string;
+  series: string;
+  headline: string;
+  lines: string[];
+  warning: string | null;
+  notify: boolean;
+  /** plain text for old clients and push bodies */
+  message: string;
+};
+
+const PRIORITY: RuleName[] = [
+  "price_after_purchase",
+  "below_target",
+  "all_time_low",
+  "below_median",
+  "drop",
+  "back_in_stock",
+  "link_broken",
+];
+const ALWAYS_PUSH: RuleName[] = ["price_after_purchase", "below_target", "all_time_low", "back_in_stock", "link_broken"];
+
+function headlineOf(r: Reason): string {
+  const p = eur(r.priceCents);
+  switch (r.rule) {
     case "price_after_purchase":
-      return `Hinta laski ostoksen jälkeen: nyt ${p}, ostit ${r}. Tarkista palautusoikeus tai hintatakuu (${eur(c.refCents! - c.priceCents)}).`;
+      return `Hinta laski ostoksen jälkeen: ${p}`;
+    case "below_target":
+      return `Alle tavoitehinnan: ${p}`;
+    case "all_time_low":
+      return `Uusi alin hinta: ${p}`;
+    case "below_median":
+      return `${pctBelow(r.priceCents, r.refCents!)} % tavallista halvempi: ${p}`;
+    case "drop":
+      return `Hinta laski: ${eur(r.refCents!)} → ${p}`;
+    case "back_in_stock":
+      return `Taas saatavilla: ${p}`;
     case "link_broken":
-      return "Linkki ei ole antanut hintaa yli vuorokauteen";
+      return `Linkki ei toimi: ${r.seller}`;
+    default:
+      return p;
   }
+}
+
+/** Detail line: for the primary reason it explains the headline, for others it is a short add-on. */
+function lineOf(r: Reason, primary: boolean, primarySeller: string): string {
+  const ref = r.refCents != null ? eur(r.refCents) : "";
+  const other = r.seller !== primarySeller ? ` (${r.seller})` : "";
+  switch (r.rule) {
+    case "price_after_purchase":
+      return `Maksoit ${ref}, nyt ${eur(r.refCents! - r.priceCents)} halvempi. Tarkista palautusoikeus tai hintatakuu.`;
+    case "below_target":
+      return primary ? `Tavoite ${ref}` : `Alittaa tavoitteen ${ref}`;
+    case "all_time_low":
+      return primary ? `Aiempi alin ${ref}` : `Uusi alin hinta (aiempi ${ref})`;
+    case "below_median":
+      return primary
+        ? `Tavallinen hinta ${ref} (30 pv mediaani)`
+        : `${pctBelow(r.priceCents, r.refCents!)} % alle tavallisen ${ref}`;
+    case "drop":
+      return primary
+        ? `Laski ${pctBelow(r.priceCents, r.refCents!)} %${other}`
+        : `Laski ${ref} → ${eur(r.priceCents)}${other}`;
+    case "back_in_stock":
+      return `Taas varastossa${other}`;
+    case "link_broken":
+      return "Ei hintaa yli vuorokauteen. Tarkista tai poista linkki.";
+    default:
+      return "";
+  }
+}
+
+/**
+ * Merge a run's reasons for one item into one event.
+ * `inflated` = the price was clearly lower within 60 days, so "below usual" / "drop" are not pushed.
+ */
+export function buildEvent(
+  reasons: Reason[],
+  opts: { pushMinPct: number; warnings?: (string | null)[]; inflated?: boolean },
+): EventDraft | null {
+  if (reasons.length === 0) return null;
+  const sorted = [...reasons].sort((a, b) => PRIORITY.indexOf(a.rule) - PRIORITY.indexOf(b.rule));
+  // One reason per rule (e.g. two shops dropping): keep the cheapest.
+  const byRule = new Map<RuleName, Reason>();
+  for (const r of sorted) {
+    const had = byRule.get(r.rule);
+    if (!had || r.priceCents < had.priceCents) byRule.set(r.rule, r);
+  }
+  const uniq = [...byRule.values()];
+  const primary = uniq[0];
+  const lines = [lineOf(primary, true, primary.seller), ...uniq.slice(1).map((r) => lineOf(r, false, primary.seller))]
+    .filter(Boolean);
+  const warning = (opts.warnings ?? []).filter((w): w is string => Boolean(w)).join(" ") || null;
+  const significant = (r: Reason) =>
+    ALWAYS_PUSH.includes(r.rule) ||
+    (!opts.inflated && (r.rule === "below_median" || r.rule === "drop") && r.refCents != null &&
+      pctBelow(r.priceCents, r.refCents) >= opts.pushMinPct);
+  const headline = headlineOf(primary);
+  return {
+    rule: primary.rule,
+    rules: uniq.map((r) => r.rule),
+    priceCents: primary.priceCents,
+    refCents: primary.refCents,
+    seller: primary.seller,
+    link: primary.link,
+    series: primary.series,
+    headline,
+    lines,
+    warning,
+    notify: uniq.some(significant),
+    message: [headline, ...lines].join(" · "),
+  };
 }
 
 export const RULE_LABELS: Record<RuleName, string> = {

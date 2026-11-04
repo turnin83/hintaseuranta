@@ -209,7 +209,38 @@ function AlertRulesSection() {
           </div>
         </form>
       </details>
+      <MutedSellers />
     </section>
+  );
+}
+
+/** Shops muted from alerts (set from a shop row on the item page with "Älä hälytä"). */
+function MutedSellers() {
+  const [h, setH] = useState<{ id: string; muted_sellers: string[] } | null>(null);
+  useEffect(() => {
+    supabase.from("households").select("id, muted_sellers").maybeSingle().then(({ data }) => setH(data));
+  }, []);
+  if (!h || h.muted_sellers.length === 0) return null;
+  const unmute = async (name: string) => {
+    const next = h.muted_sellers.filter((m) => m !== name);
+    const { error } = await supabase.from("households").update({ muted_sellers: next }).eq("id", h.id);
+    if (error) return toast(error.message);
+    setH({ ...h, muted_sellers: next });
+    toast(`${name}: hälytykset taas käytössä`);
+  };
+  return (
+    <div class="stack-sm">
+      <h3>Ei hälytyksiä näistä kaupoista</h3>
+      <div class="tag-list">
+        {h.muted_sellers.map((m) => (
+          <span class="tag" key={m}>
+            {m}
+            <button type="button" class="tag-remove" onClick={() => unmute(m)} aria-label={`Hälytä taas: ${m}`}>×</button>
+          </span>
+        ))}
+      </div>
+      <p class="meta">Hinnat näkyvät edelleen. Kaupan saa hiljennettyä tuotteen hintataulukosta (Älä hälytä).</p>
+    </div>
   );
 }
 

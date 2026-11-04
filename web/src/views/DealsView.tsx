@@ -8,7 +8,7 @@ import { dataVersion } from "../lib/store.ts";
 import { assessDeal, type DealAssessment, isDeal, type Tier, TIERS } from "../lib/deals.ts";
 import { TopBar } from "../components/chrome.tsx";
 import { CampaignBadge } from "../components/CampaignBadge.tsx";
-import { IconArrowDown, IconCheck, IconExternal } from "../components/icons.tsx";
+import { IconAlert, IconArrowDown, IconCheck, IconExternal } from "../components/icons.tsx";
 
 type Filter = "all" | "20" | "40" | "buy";
 const FILTERS: { key: Filter; label: string }[] = [
@@ -126,6 +126,9 @@ function DealCard({ deal: { item: i, a } }: { deal: Deal }) {
           </p>
         )}
         {!a.recommendation && a.reasons.length > 0 && <p class="meta">{tierLabel ? `${tierLabel}: ` : ""}{a.reasons.join(", ")}</p>}
+        {a.warnings.map((w) => (
+          <p class="claim-warn" key={w}><IconAlert width={16} height={16} /><span>{w}</span></p>
+        ))}
         <p class="meta">
           {i.best_shipping_cents != null && (i.best_shipping_cents === 0 ? "Ilmainen toimitus · " : `Toimitettuna ${eur(i.best_price_cents! + i.best_shipping_cents)} · `)}
           {a.lowConfidence ? "Vähän hintahistoriaa, arvio on suuntaa antava · " : ""}päivitetty {ago(i.best_ts)}

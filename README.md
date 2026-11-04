@@ -236,31 +236,44 @@ eivät pilvestä), aja `probe`-funktio (tai käytä vertailusivua). Varapolkuna 
 
 ## Hälytyssäännöt
 
-Säännöt säädetään **Asetukset → Hälytykset** koko kotitaloudelle. Tuotteelle voi tehdä omat
-poikkeukset (tuotesivu → Hälytyssäännöt → *Mukauta tälle tuotteelle*); vain erot tallennetaan,
-joten yleisten sääntöjen muutokset koskevat muuten kaikkia tuotteita.
-Tehokkaat säännöt = oletukset ← kotitalous (`households.default_rules`) ← tuote (`wish_items.rules`).
+Säännöt säädetään **Asetukset → Hälytykset** koko kotitaloudelle; tuotteelle voi tehdä poikkeukset
+(*Mukauta tälle tuotteelle*, vain erot tallennetaan). Tehokkaat säännöt = oletukset ← kotitalous
+(`households.default_rules`) ← tuote (`wish_items.rules`).
 
-**Tuotetaso**: arvioidaan tuotteen parhaasta nykyisestä hinnasta kaikkien kauppojen yli (tuore ≤ 3 pv,
-ei loppu), kerran per ajo. Yksi hälytys per tuote, halvin kauppa mainitaan.
+**Yksi hälytys per tuote ja haku.** Kaikki yhden haun löydökset kootaan yhdeksi tapahtumaksi
+(`alert_events.rules`, `details`): otsikko (tärkein syy ja hinta), kauppa, muut syyt riveinä ja tarvittaessa
+varoitus. Esimerkki: *Alle tavoitehinnan: 199 €* · Verkkokauppa.com · Uusi alin hinta (aiempi 209 €) ·
+18 % alle tavallisen 243 € · Laski 319 € → 199 €.
 
-| Sääntö | Oletus |
+**Tuotetaso** (paras nykyinen hinta kaikkien kauppojen yli, tuore ≤ 36 h, ei loppu):
+
+| Sääntö | Milloin |
 |---|---|
-| Alittaa tavoitehinnan | päällä (tavoitehinta asetettava) |
-| Kaikkien aikojen alin | alempi kuin mikään aiempi havainto, vähintään 6 havaintoa |
-| Alle 30 pv mediaanin | ≥ 10 % alle päivittäisten minimien mediaanin (vähintään 3 päivää) |
+| Alle tavoitehinnan | kun hinta menee tavoitteen alle; uudelleen vain, jos laskee vielä selvästi tai käy välillä yli |
+| Kaikkien aikojen alin | selvästi (≥ 1 € ja ≥ 1 %) alle aiemman alimman, vähintään 6 havaintoa |
+| Alle tavallisen hinnan | ≥ 10 % alle 30 pv päiväminimien mediaanin; tilasidonnainen kuten tavoite |
 
-**Kauppataso**: yksittäinen kauppa / vertailusivun myyjä.
+Tilasidonnaisuus tallentuu `wish_items.alert_state`-kenttään; ensimmäinen arvio vain kirjaa tilan (ei hälytystä).
 
-| Sääntö | Oletus |
-|---|---|
-| Pudotus edellisestä hinnasta | ≥ 5 % |
-| Palaa varastoon | päällä |
-| Vain kun kauppa on tuotteen halvin | päällä: pudotus / varastoon ilmoitetaan vain, jos kauppa on sen jälkeen halvin |
-| Epäilyttävä tarjous | kauppa ilmoittaa vertailuhinnan, mutta oma historia (≥ 7 pv) näyttää saman tai alemman hinnan 30 pv sisällä. Vain listaan, ei pushia. |
+**Kauppataso**: hinnanpudotus (≥ 5 % ja ≥ 1 €) ja varastoon palaaminen, oletuksena vain jos kauppa on
+sen jälkeen tuotteen halvin. Paluu hintaan, joka kaupalla oli jo viimeisen 7 päivän aikana, ei ole pudotus
+(hinnan nosto ennen "alea"). Toisto aikaisintaan 24 h, ellei hinta laske edelleen.
 
-**Toisto (cooldown)**: sama sääntö uudelleen vain, jos hinta laskee edelleen tai 24 h on kulunut
-(tuotetason säännöt per tuote, kauppatason per kauppa).
+**Ilmoitus puhelimeen** vain merkittävistä: tavoite, uusi alin, varastoon aina; alennus tavallisesta tai
+pudotus vasta kun ≥ `push_min_pct` (oletus 20 %, säädettävä). Muut näkyvät vain Hälytykset-listassa.
+Jos hinta on ollut 60 päivän sisällä selvästi alempi, alennusta ei pushata ja hälytykseen tulee varoitus.
+
+**Ei hälytyksiä**: vertailusivun nimetön alin hinta (hintaseuranta.fi tai hinta.fi ilman kauppaa),
+hiljennetyt kaupat (*Älä hälytä* hintataulukossa, lista Asetuksissa) ja kaupat, joita tuote seuraa jo
+suoraan (vertailusivun sama kauppa poistetaan valinnoista automaattisesti, myös eri nimillä).
+
+**Kaupan ennen-hinta** (VK, Power, hintaopas) verrataan omaan 30 päivän alimpaan
+(`price_observations.own_low_30d_cents`, vaatii viikon historiaa): *Ei oikea alennus* / *Alennus liioiteltu* /
+*täsmää seurantaan*. Näkyy hintataulukossa, tarjouskortissa ja hälytyksessä; harhaanjohtava alennus tai
+aiemmin selvästi alempi hinta pudottaa ostosuosituksen "Harkitse"-tasolle (oma tavoitehinta ohittaa).
+
+**Hälytykset-näkymä**: *Lista* tai *Tuotteittain* (muistetaan käyttäjäkohtaisesti), 30 päivää, yli 7 päivää
+vanhat merkitään luetuiksi automaattisesti.
 
 ## Kehitys
 

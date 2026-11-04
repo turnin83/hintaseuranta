@@ -9,7 +9,8 @@ export function rulesSummary(r: Rules): string {
   if (r.below_median.enabled) on.push(`−${r.below_median.pct} % mediaanista`);
   if (r.drop.enabled) on.push(`pudotus ${r.drop.pct} %`);
   if (r.back_in_stock) on.push("varastoon");
-  return on.length ? on.join(" · ") : "kaikki hälytykset pois";
+  if (!on.length) return "kaikki hälytykset pois";
+  return `${on.join(" · ")}; ilmoitus puhelimeen alennuksista ≥ ${r.push_min_pct} %`;
 }
 
 export function RulesForm(props: { value: Rules; onChange: (r: Rules) => void; targetSet?: boolean }) {
@@ -66,16 +67,23 @@ export function RulesForm(props: { value: Rules; onChange: (r: Rules) => void; t
           <input type="checkbox" checked={r.only_cheapest} onChange={(e) => set({ only_cheapest: chk(e) })} />
           <span>Vain kun kauppa on tuotteen halvin<span class="meta"> · suositus, vähentää turhia hälytyksiä</span></span>
         </label>
-        <label class="check">
-          <input type="checkbox" checked={r.suspicious} onChange={(e) => set({ suspicious: chk(e) })} />
-          <span>{RULE_LABELS.suspicious_discount}<span class="meta"> · vain listaan, ei ilmoitusta</span></span>
+        <label class="field indent"><span>Saman kaupan hälytyksen toisto aikaisintaan (h)</span>
+          <input type="number" min={1} max={720} value={r.cooldown_hours} onInput={(e) => set({ cooldown_hours: num(e) })} />
+          <span class="hint">Aiemmin, jos hinta laskee edelleen.</span>
         </label>
       </div>
 
-      <label class="field"><span>Saman hälytyksen toisto aikaisintaan (h)</span>
-        <input type="number" min={1} max={720} value={r.cooldown_hours} onInput={(e) => set({ cooldown_hours: num(e) })} />
-        <span class="hint">Aiemmin, jos hinta laskee edelleen.</span>
-      </label>
+      <div class="stack-sm">
+        <h3>Ilmoitus puhelimeen</h3>
+        <label class="field"><span>Kun alennus on vähintään (%)</span>
+          <input type="number" min={1} max={90} value={r.push_min_pct} onInput={(e) => set({ push_min_pct: num(e) })} />
+          <span class="hint">
+            Koskee alennusta tavallisesta hinnasta ja hinnanpudotusta. Pienemmät näkyvät vain Hälytykset-listassa.
+            Tavoitehinnan alitus, uusi alin hinta ja varastoon palaaminen ilmoitetaan aina.
+          </span>
+        </label>
+        <p class="meta">Saman tilanteen hälytys ei toistu päivittäin: uusi hälytys tulee vasta, kun hinta laskee vielä selvästi (vähintään 1 € ja 1 %) tai nousee välillä ja laskee uudelleen.</p>
+      </div>
     </div>
   );
 }

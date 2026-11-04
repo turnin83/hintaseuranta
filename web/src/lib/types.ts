@@ -17,6 +17,8 @@ export type WishSummary = {
   best_seller: string | null;
   best_price_cents: number | null;
   best_shipping_cents: number | null;
+  best_claim_cents: number | null; // shop's "before" price for the best offer
+  best_own_low_cents: number | null; // our lowest price for it in the 30 days before
   best_url: string | null;
   best_availability: Availability | null;
   best_ts: string | null;
@@ -69,6 +71,8 @@ export type Series = {
   ts: string;
   availability: Availability;
   lowest_30d_cents: number | null;
+  own_low_30d_cents: number | null;
+  shop_strategy: "direct" | "aggregator" | "blocked";
   shipping_cents: number | null;
   min_all: number;
   min_30d: number | null;
@@ -87,8 +91,18 @@ export type AlertEvent = {
   ref_cents: number | null;
   message: string;
   ts: string;
-  read: boolean; // per signed-in user (v_alerts)
+  read: boolean; // per signed-in user (v_alerts); older than 7 days count as read
   item_name: string;
+  rules: string[];
+  notify: boolean;
+  details: AlertDetails | null; // null for events from before merged alerts
+};
+
+export type AlertDetails = {
+  headline: string;
+  lines: string[];
+  warning: string | null;
+  seller: string;
 };
 
 export type Household = { id: string; name: string; fetch_interval_minutes: number };

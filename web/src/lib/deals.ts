@@ -1,6 +1,8 @@
 // Deal assessment: how good is the item's best current price compared with its own history,
 // and should we recommend buying now. Used by the Deals view and the item page.
 import type { WishSummary } from "./types.ts";
+// Relative path (not @shared) so the Node unit tests can import this module too.
+import { claimCheck, describeClaim, eur, meaningfulDrop } from "../../../supabase/functions/_shared/rules.ts";
 
 export type Tier = "must" | "excellent" | "good" | "small";
 export type Recommendation = "buy" | "consider";
@@ -21,6 +23,8 @@ export type DealAssessment = {
   allTimeLow: boolean;
   recommendation: Recommendation | null;
   reasons: string[];
+  /** Things that may make the deal look better than it is (misleading "before" price, lower earlier). */
+  warnings: string[];
   lowConfidence: boolean;
   score: number;
 };
@@ -29,7 +33,7 @@ export function assessDeal(i: WishSummary, obsCount: number): DealAssessment {
   const p = i.best_price_cents;
   const none: DealAssessment = {
     discountPct: null, tier: null, targetHit: false, allTimeLow: false, recommendation: null, reasons: [],
-    lowConfidence: true, score: 0,
+    warnings: [], lowConfidence: true, score: 0,
   };
   if (p == null || i.best_availability === "out_of_stock" || i.purchased_at) return none;
 
@@ -46,12 +50,21 @@ export function assessDeal(i: WishSummary, obsCount: number): DealAssessment {
   if (allTimeLow) reasons.push("halvin koskaan seurattu hinta");
   if (targetHit) reasons.push("alittaa tavoitehinnan");
 
+  const warnings: string[] = [];
+  const claim = claimCheck(p, i.best_claim_cents, i.best_own_low_cents);
+  if (claim && claim.kind !== "ok") warnings.push(describeClaim(claim));
+  // Price raised and then "discounted": the usual price looks high, but we have seen it clearly lower.
+  const wasLower = i.min_all_cents != null && meaningfulDrop(p, i.min_all_cents) && p > i.min_all_cents * 1.03;
+  if (wasLower) warnings.push(`Hinta on ollut alempi: ${eur(i.min_all_cents!)}.`);
+
   let recommendation: Recommendation | null = null;
   if ((discountPct ?? 0) >= 40 || targetHit || (allTimeLow && (discountPct ?? 0) >= 15)) recommendation = "buy";
   else if ((discountPct ?? 0) >= 20 || allTimeLow) recommendation = "consider";
+  // Only the user's own target overrides a misleading-looking discount.
+  if (recommendation === "buy" && !targetHit && (wasLower || claim?.kind === "fake")) recommendation = "consider";
 
-  const score = (discountPct ?? 0) + (targetHit ? 15 : 0) + (allTimeLow ? 10 : 0);
-  return { discountPct, tier, targetHit, allTimeLow, recommendation, reasons, lowConfidence, score };
+  const score = (discountPct ?? 0) + (targetHit ? 15 : 0) + (allTimeLow ? 10 : 0) - (warnings.length ? 10 : 0);
+  return { discountPct, tier, targetHit, allTimeLow, recommendation, reasons, warnings, lowConfidence, score };
 }
 
 export function isDeal(d: DealAssessment): boolean {

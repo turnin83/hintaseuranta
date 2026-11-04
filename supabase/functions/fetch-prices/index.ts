@@ -9,25 +9,38 @@
 // min_delay_ms between requests; a few domains run in parallel. A run stops starting new fetches when
 // the time budget is used up; unfinished links stay due and are picked up by the next tick.
 //
-// Alerts: series rules (drop, back in stock, suspicious discount) per fetched shop/seller; item rules
-// (below target, all-time low, below 30 d median) once per fetched item on its best current price.
+// Alerts: shop-level reasons (drop, back in stock) are collected while links are fetched; after the
+// fetches each touched item gets its item-level reasons (below target, all-time low, below usual price)
+// and everything is merged into ONE event per item (rules.ts buildEvent). Only significant events are
+// pushed. Sellers without a known shop (comparison page lows), muted sellers and duplicates of a shop the
+// item already follows directly are left out of alerts.
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { adminClient, CORS, isCronRequest, json, userFromRequest } from "../_shared/http.ts";
 import { createRobotsCache, fetchPage, sleep, type RobotsCache } from "../_shared/fetcher.ts";
-import { extractPage, sellerKey } from "../_shared/extract.ts";
+import { extractPage } from "../_shared/extract.ts";
+import { sellerKey, sellerMatchesShop } from "../_shared/search.ts";
 import {
-  type AlertCandidate,
+  claimCheck,
   dailyMinMedian,
-  describeAlert,
+  describeClaim,
+  eur,
   evaluateAfterPurchase,
   evaluateItemRules,
   evaluateSeriesRules,
+  type EventDraft,
+  type ItemAlertState,
+  buildEvent,
+  meaningfulDrop,
   mergeRules,
   type Obs,
+  ownLow30d,
   passesCooldown,
+  type PrevAlert,
+  type Reason,
+  type RuleName,
   type Rules,
 } from "../_shared/rules.ts";
-import type { Availability } from "../_shared/types.ts";
+import type { Availability, Offer } from "../_shared/types.ts";
 import { pushToHousehold } from "../_shared/push.ts";
 import { enrichPage } from "../_shared/enrich.ts";
 
@@ -36,6 +49,7 @@ const MAX_LINKS = 150;
 const DOMAIN_CONCURRENCY = 4;
 const HISTORY_LIMIT = 1000;
 const FRESH_MS = 36 * 3_600_000; // an offer older than this is not a "current" price (same as v_wish_summary)
+const DAY = 86_400_000;
 
 type LinkRow = {
   id: string;
@@ -49,6 +63,7 @@ type LinkRow = {
   sellers: string[] | null;
   fail_count: number;
   failing_since: string | null;
+  created_at: string;
 };
 type ShopRow = { id: number; domain: string; name: string | null; strategy: string; min_delay_ms: number };
 type ItemRow = {
@@ -59,18 +74,29 @@ type ItemRow = {
   rules: unknown;
   purchased_at: string | null;
   purchased_price_cents: number | null;
+  alert_state: ItemAlertState | null;
 };
 type SeriesRow = {
   product_link_id: string;
   seller: string;
   seller_name: string;
+  shop_strategy: string;
   price_cents: number;
   ts: string;
   availability: Availability;
+  lowest_30d_cents: number | null;
+  own_low_30d_cents: number | null;
 };
 
-type PendingAlert = { id: number; itemId: string; itemName: string; seller: string; message: string };
-type Ctx = { ok: number; fail: number; alerts: PendingAlert[]; errors: { url: string; error: string }[] };
+type PendingPush = { id: number; itemId: string; itemName: string; seller: string; message: string };
+type Ctx = {
+  ok: number;
+  fail: number;
+  events: number;
+  alerts: PendingPush[]; // events to push
+  reasons: Map<string, Reason[]>; // shop-level reasons per item, merged after the fetches
+  errors: { url: string; error: string }[];
+};
 type HouseholdRow = {
   id: string;
   default_rules: unknown;
@@ -78,8 +104,10 @@ type HouseholdRow = {
   quiet_start: number;
   quiet_end: number;
   timezone: string;
+  muted_sellers: string[];
 };
-const HOUSEHOLD_COLS = "id, default_rules, quiet_enabled, quiet_start, quiet_end, timezone";
+const HOUSEHOLD_COLS = "id, default_rules, quiet_enabled, quiet_start, quiet_end, timezone, muted_sellers";
+type IsMuted = (sellerName: string) => boolean;
 
 /** Quiet hours in the household's time zone (start inclusive, end exclusive; may wrap midnight). */
 function inQuietHours(h: HouseholdRow | undefined, at = new Date()): boolean {
@@ -90,6 +118,16 @@ function inQuietHours(h: HouseholdRow | undefined, at = new Date()): boolean {
     : hour >= h.quiet_start || hour < h.quiet_end;
 }
 
+function mutedMatcher(names: string[] | undefined): IsMuted {
+  const list = names ?? [];
+  return (name) => list.some((m) => sellerKey(m) === sellerKey(name) || sellerMatchesShop(name, { domain: m, name: m }));
+}
+
+/** Can this offer raise alerts? Not a comparison page's anonymous low price, not a muted seller. */
+function alertable(s: SeriesRow, isMuted: IsMuted): boolean {
+  return !(s.shop_strategy === "aggregator" && s.seller === "") && !isMuted(s.seller_name);
+}
+
 type ObsRow = { ts: string; price_cents: number; availability: string; lowest_30d_cents: number | null };
 
 const toObs = (r: ObsRow): Obs => ({
@@ -98,6 +136,11 @@ const toObs = (r: ObsRow): Obs => ({
   availability: r.availability as Availability,
   lowest30dCents: r.lowest_30d_cents,
 });
+
+const fiDay = (ts: string) => {
+  const d = new Date(ts);
+  return `${d.getDate()}.${d.getMonth() + 1}.`;
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -143,18 +186,24 @@ Deno.serve(async (req) => {
 
   const [shops, items, households] = await Promise.all([
     admin.from("shops").select("id, domain, name, strategy, min_delay_ms").in("id", [...new Set(links.map((l) => l.shop_id))]),
-    admin.from("wish_items").select("id, household_id, name, target_price_cents, rules, purchased_at, purchased_price_cents").in("id", [...new Set(links.map((l) => l.wish_item_id))]),
+    admin.from("wish_items")
+      .select("id, household_id, name, target_price_cents, rules, purchased_at, purchased_price_cents, alert_state")
+      .in("id", [...new Set(links.map((l) => l.wish_item_id))]),
     admin.from("households").select(HOUSEHOLD_COLS).in("id", [...new Set(links.map((l) => l.household_id))]),
   ]);
   const shopById = new Map((shops.data as ShopRow[] ?? []).map((s) => [s.id, s]));
   const itemById = new Map((items.data as ItemRow[] ?? []).map((i) => [i.id, i]));
   const householdById = new Map(((households.data ?? []) as HouseholdRow[]).map((h) => [h.id, h]));
   const rulesFor = (item: ItemRow): Rules => mergeRules(householdById.get(item.household_id)?.default_rules, item.rules);
+  const mutedFor = new Map([...householdById.values()].map((h) => [h.id, mutedMatcher(h.muted_sellers)]));
+  const isMutedFor = (hid: string): IsMuted => mutedFor.get(hid) ?? (() => false);
 
   // Results are collected per household (shared data, shared pushes, one run log each).
   const ctxByHousehold = new Map<string, Ctx>();
   const ctxFor = (hid: string) => {
-    if (!ctxByHousehold.has(hid)) ctxByHousehold.set(hid, { ok: 0, fail: 0, alerts: [], errors: [] });
+    if (!ctxByHousehold.has(hid)) {
+      ctxByHousehold.set(hid, { ok: 0, fail: 0, events: 0, alerts: [], reasons: new Map(), errors: [] });
+    }
     return ctxByHousehold.get(hid)!;
   };
   const touchedItems = new Set<string>();
@@ -180,7 +229,9 @@ Deno.serve(async (req) => {
       if (!item) continue;
       const ctx = ctxFor(link.household_id);
       try {
-        if (await processLink(admin, robots, link, shop, item, rulesFor(item), ctx)) touchedItems.add(item.id);
+        if (await processLink(admin, robots, link, shop, item, rulesFor(item), isMutedFor(item.household_id), ctx)) {
+          touchedItems.add(item.id);
+        }
       } catch (e) {
         ctx.fail++;
         ctx.errors.push({ url: link.url, error: String(e) });
@@ -205,12 +256,12 @@ Deno.serve(async (req) => {
 
   if (released.length) await admin.from("product_links").update({ claimed_until: null }).in("id", released);
 
-  // Item-level rules, once per item that got new prices in this run.
+  // One event per item that got new prices in this run.
   for (const itemId of touchedItems) {
     const item = itemById.get(itemId)!;
     const ctx = ctxFor(item.household_id);
     try {
-      await evaluateItem(admin, item, rulesFor(item), started, ctx);
+      await evaluateItem(admin, item, rulesFor(item), isMutedFor(item.household_id), started, ctx);
     } catch (e) {
       ctx.errors.push({ url: `item ${item.name}`, error: String(e) });
     }
@@ -230,14 +281,14 @@ Deno.serve(async (req) => {
       started_at: started.toISOString(),
       ok_count: ctx.ok,
       fail_count: ctx.fail,
-      alert_count: ctx.alerts.length,
+      alert_count: ctx.events,
       errors: ctx.errors.slice(0, 50),
     });
   }
 
   const totals = [...ctxByHousehold.values()].reduce(
-    (a, c) => ({ ok: a.ok + c.ok, fail: a.fail + c.fail, alerts: a.alerts + c.alerts.length }),
-    { ok: 0, fail: 0, alerts: 0 },
+    (a, c) => ({ ok: a.ok + c.ok, fail: a.fail + c.fail, alerts: a.alerts + c.events, pushed: a.pushed + c.alerts.length }),
+    { ok: 0, fail: 0, alerts: 0, pushed: 0 },
   );
   return json({ trigger, links: links.length, deferred: released.length, ...totals, ms: Date.now() - started.getTime() });
 });
@@ -245,50 +296,109 @@ Deno.serve(async (req) => {
 /** Current offers of an item: tracked, fresh, not out of stock. */
 async function currentOffers(admin: SupabaseClient, itemId: string): Promise<SeriesRow[]> {
   const { data, error } = await admin.from("v_series")
-    .select("product_link_id, seller, seller_name, price_cents, ts, availability")
+    .select("product_link_id, seller, seller_name, shop_strategy, price_cents, ts, availability, lowest_30d_cents, own_low_30d_cents")
     .eq("wish_item_id", itemId).eq("tracked", true);
   if (error) throw error;
   const now = Date.now();
   return ((data ?? []) as SeriesRow[]).filter((s) => s.availability !== "out_of_stock" && now - Date.parse(s.ts) < FRESH_MS);
 }
 
-/** Inserts an alert unless its cooldown blocks it; queues pushes for alert-level events. */
-async function raiseAlert(
+/** Latest earlier event that contained this reason (cooldowns of shop-level rules, purchase, broken link). */
+async function lastReason(
+  admin: SupabaseClient,
+  itemId: string,
+  rule: RuleName,
+  link?: string,
+  series?: string,
+): Promise<PrevAlert | undefined> {
+  const match: Record<string, string> = { rule };
+  if (link) match.link = link;
+  if (series !== undefined) match.series = series;
+  const { data } = await admin.from("alert_events").select("ts, price_cents, details")
+    .eq("wish_item_id", itemId).contains("details", { reasons: [match] })
+    .order("ts", { ascending: false }).limit(1).maybeSingle();
+  if (data) {
+    const reasons = ((data.details as { reasons?: Record<string, unknown>[] } | null)?.reasons ?? []);
+    const r = reasons.find((x) => Object.entries(match).every(([k, v]) => x[k] === v));
+    return { ts: Date.parse(data.ts), priceCents: (r?.price as number | undefined) ?? data.price_cents };
+  }
+  // Events from before merged alerts (no details).
+  let q = admin.from("alert_events").select("ts, price_cents").eq("wish_item_id", itemId).eq("rule", rule).is("details", null);
+  if (link) q = q.eq("product_link_id", link);
+  if (series !== undefined) q = q.eq("seller", series);
+  const { data: old } = await q.order("ts", { ascending: false }).limit(1).maybeSingle();
+  return old ? { ts: Date.parse(old.ts), priceCents: old.price_cents } : undefined;
+}
+
+/** Stores one merged event; significant ones are queued for push. */
+async function insertEvent(
   admin: SupabaseClient,
   ctx: Ctx,
   item: ItemRow,
-  rules: Rules,
-  c: AlertCandidate,
-  at: { linkId: string; seller: string; sellerName: string; userId: string | null; itemWide: boolean; cooldownHours?: number },
+  d: EventDraft,
+  reasons: Reason[],
+  userId: string | null,
 ) {
-  let prevQ = admin.from("alert_events").select("ts, price_cents").eq("rule", c.rule);
-  prevQ = at.itemWide
-    ? prevQ.eq("wish_item_id", item.id)
-    : prevQ.eq("product_link_id", at.linkId).eq("seller", at.seller);
-  const { data: prev } = await prevQ.order("ts", { ascending: false }).limit(1).maybeSingle();
-  const prevAlert = prev ? { ts: Date.parse(prev.ts), priceCents: prev.price_cents } : undefined;
-  if (!passesCooldown(c, prevAlert, Date.now(), at.cooldownHours ?? rules.cooldown_hours)) return;
-
-  const message = describeAlert(c);
-  const { data: ins, error } = await admin.from("alert_events").insert({
-    user_id: at.userId,
+  const { data, error } = await admin.from("alert_events").insert({
+    user_id: userId,
     household_id: item.household_id,
     wish_item_id: item.id,
-    product_link_id: at.linkId,
-    seller: at.seller,
-    rule: c.rule,
-    level: c.level,
-    price_cents: c.priceCents,
-    ref_cents: c.refCents,
-    message,
+    product_link_id: d.link,
+    seller: d.seller,
+    rule: d.rule,
+    rules: d.rules,
+    level: "alert",
+    price_cents: d.priceCents,
+    ref_cents: d.refCents,
+    message: d.message,
+    notify: d.notify,
+    details: {
+      headline: d.headline,
+      lines: d.lines,
+      warning: d.warning,
+      seller: d.seller,
+      reasons: reasons.map((r) => ({ rule: r.rule, link: r.link, series: r.series, price: r.priceCents })),
+    },
   }).select("id").single();
   if (error) throw error;
-  if (c.level === "alert") {
-    ctx.alerts.push({ id: ins.id, itemId: item.id, itemName: item.name, seller: at.sellerName, message });
+  ctx.events++;
+  if (d.notify) {
+    ctx.alerts.push({
+      id: data.id,
+      itemId: item.id,
+      itemName: item.name,
+      seller: d.seller,
+      message: d.message + (d.warning ? ` · Huom: ${d.warning}` : ""),
+    });
   }
 }
 
-/** Fetches one link, stores observations and evaluates series rules. Returns true on success. */
+/**
+ * Aggregator pages: leave out sellers the item already follows elsewhere (its direct shop links, or an
+ * earlier comparison link) so one price change is not recorded and alerted twice. The link's seller
+ * selection is updated so the exclusion sticks; history is kept.
+ */
+async function dropDuplicateSellers(admin: SupabaseClient, link: LinkRow, offers: Offer[]): Promise<Offer[]> {
+  const sellers = offers.map((o) => o.seller).filter((s): s is string => Boolean(s));
+  if (sellers.length === 0) return offers;
+  const { data } = await admin.from("product_links").select("id, created_at, shops(domain, name, strategy)")
+    .eq("wish_item_id", link.wish_item_id).eq("active", true).neq("id", link.id);
+  const others = (data ?? []) as unknown as { id: string; created_at: string; shops: { domain: string; name: string | null; strategy: string } }[];
+  const direct = others.filter((o) => o.shops?.strategy !== "aggregator").map((o) => o.shops);
+  const earlierAgg = others.filter((o) => o.shops?.strategy === "aggregator" && o.created_at < link.created_at).map((o) => o.id);
+  let earlierKeys = new Set<string>();
+  if (earlierAgg.length) {
+    const { data: tracked } = await admin.from("v_series").select("seller").in("product_link_id", earlierAgg).eq("tracked", true).neq("seller", "");
+    earlierKeys = new Set((tracked ?? []).map((t) => sellerKey(t.seller as string)));
+  }
+  const dupes = new Set(sellers.filter((s) => direct.some((shop) => sellerMatchesShop(s, shop)) || earlierKeys.has(sellerKey(s))));
+  if (dupes.size === 0) return offers;
+  const keep = (link.sellers ?? sellers).filter((s) => !dupes.has(s) && ![...dupes].some((d) => sellerKey(d) === sellerKey(s)));
+  await admin.from("product_links").update(keep.length ? { sellers: keep } : { active: false }).eq("id", link.id);
+  return offers.filter((o) => o.seller && !dupes.has(o.seller));
+}
+
+/** Fetches one link, stores observations and collects shop-level reasons. Returns true on success. */
 async function processLink(
   admin: SupabaseClient,
   robots: RobotsCache,
@@ -296,9 +406,11 @@ async function processLink(
   shop: ShopRow,
   item: ItemRow,
   rules: Rules,
+  isMuted: IsMuted,
   ctx: Ctx,
 ): Promise<boolean> {
   const now = new Date().toISOString();
+  const nowMs = Date.parse(now);
   const fail = async (status: "error" | "blocked" | "no_data", error: string) => {
     ctx.fail++;
     ctx.errors.push({ url: link.url, error });
@@ -313,15 +425,15 @@ async function processLink(
     }).eq("id", link.id);
     await admin.from("shops").update({ last_error: `${status}: ${error}`.slice(0, 500) }).eq("id", shop.id);
     // Broken for over a day: one alert per link per week (not for purchased items).
-    if (!item.purchased_at && Date.now() - Date.parse(failingSince) > 24 * 3_600_000) {
-      await raiseAlert(admin, ctx, item, rules, { rule: "link_broken", level: "alert", priceCents: 0, refCents: null }, {
-        linkId: link.id,
-        seller: "",
-        sellerName: shop.name || shop.domain,
-        userId: link.user_id,
-        itemWide: false,
-        cooldownHours: 7 * 24,
-      });
+    if (!item.purchased_at && nowMs - Date.parse(failingSince) > DAY) {
+      const prev = await lastReason(admin, item.id, "link_broken", link.id);
+      if (!prev || nowMs - prev.ts >= 7 * DAY) {
+        const reason: Reason = {
+          rule: "link_broken", level: "alert", priceCents: 0, refCents: null,
+          seller: shop.name || shop.domain, link: link.id, series: "",
+        };
+        await insertEvent(admin, ctx, item, buildEvent([reason], { pushMinPct: rules.push_min_pct })!, [reason], link.user_id);
+      }
     }
     return false;
   };
@@ -340,7 +452,20 @@ async function processLink(
     offers = offers.filter((o) => o.seller && wanted.has(sellerKey(o.seller)));
     if (offers.length === 0) return fail("no_data", `Selected sellers not listed: ${link.sellers.join(", ")}`);
   }
+  if (page.kind === "aggregator") offers = await dropDuplicateSellers(admin, link, offers);
   if (page.kind === "shop") offers = offers.slice(0, 1).map((o) => ({ ...o, seller: null }));
+
+  // History per series before this observation (own 30-day low + shop rules).
+  const histories = new Map<string, Obs[]>();
+  for (const o of offers) {
+    const seller = o.seller ?? "";
+    const { data: hist, error } = await admin.from("price_observations")
+      .select("ts, price_cents, availability, lowest_30d_cents")
+      .eq("product_link_id", link.id).eq("seller", seller).lt("ts", now)
+      .order("ts", { ascending: false }).limit(HISTORY_LIMIT);
+    if (error) throw error;
+    histories.set(seller, ((hist ?? []) as ObsRow[]).map(toObs));
+  }
 
   const rows = offers.map((o) => ({
     user_id: link.user_id,
@@ -352,36 +477,34 @@ async function processLink(
     currency: o.currency ?? "EUR",
     availability: o.availability,
     lowest_30d_cents: o.lowest30dCents,
+    own_low_30d_cents: ownLow30d(histories.get(o.seller ?? "") ?? [], nowMs),
     shipping_cents: o.shippingCents ?? null,
     source: page.source,
   }));
-  const { error: insErr } = await admin.from("price_observations").insert(rows);
-  if (insErr) throw insErr;
+  if (rows.length) {
+    const { error: insErr } = await admin.from("price_observations").insert(rows);
+    if (insErr) throw insErr;
+  }
 
-  // Other shops' current offers (for "only when this shop is the cheapest").
-  const offersNow = item.purchased_at ? [] : await currentOffers(admin, item.id);
-
-  for (const row of item.purchased_at ? [] : rows) {
-    const { data: hist, error } = await admin
-      .from("price_observations")
-      .select("ts, price_cents, availability, lowest_30d_cents")
-      .eq("product_link_id", link.id)
-      .eq("seller", row.seller)
-      .lt("ts", now)
-      .order("ts", { ascending: false })
-      .limit(HISTORY_LIMIT);
-    if (error) throw error;
-    const others = offersNow.filter((s) => !(s.product_link_id === link.id && s.seller === row.seller));
-    const othersBestCents = others.length ? Math.min(...others.map((s) => s.price_cents)) : null;
-    const candidates = evaluateSeriesRules({ current: toObs(row), history: (hist ?? []).map(toObs), othersBestCents, rules });
-    for (const c of candidates) {
-      await raiseAlert(admin, ctx, item, rules, c, {
-        linkId: link.id,
-        seller: row.seller,
-        sellerName: row.seller || shop.name || shop.domain,
-        userId: link.user_id,
-        itemWide: false,
+  if (!item.purchased_at && rows.length) {
+    // Other shops' current offers (for "only when this shop is the cheapest").
+    const offersNow = (await currentOffers(admin, item.id)).filter((s) => alertable(s, isMuted));
+    for (const row of rows) {
+      if (page.kind === "aggregator" && !row.seller) continue; // comparison page low: shop unknown
+      const sellerName = row.seller || shop.name || shop.domain;
+      if (isMuted(sellerName)) continue;
+      const others = offersNow.filter((s) => !(s.product_link_id === link.id && s.seller === row.seller));
+      const othersBestCents = others.length ? Math.min(...others.map((s) => s.price_cents)) : null;
+      const candidates = evaluateSeriesRules({
+        current: toObs(row), history: histories.get(row.seller) ?? [], othersBestCents, rules,
       });
+      for (const c of candidates) {
+        const prev = await lastReason(admin, item.id, c.rule, link.id, row.seller);
+        if (!passesCooldown(c, prev, nowMs, rules.cooldown_hours)) continue;
+        const list = ctx.reasons.get(item.id) ?? [];
+        list.push({ ...c, seller: sellerName, link: link.id, series: row.seller });
+        ctx.reasons.set(item.id, list);
+      }
     }
   }
 
@@ -400,59 +523,87 @@ async function processLink(
   return true;
 }
 
-/** Item rules on the best current price across all shops, compared with history before this run. */
-async function evaluateItem(admin: SupabaseClient, item: ItemRow, rules: Rules, started: Date, ctx: Ctx) {
-  const offers = await currentOffers(admin, item.id);
+/** Item rules on the best current price, merged with the run's shop-level reasons into one event. */
+async function evaluateItem(
+  admin: SupabaseClient,
+  item: ItemRow,
+  rules: Rules,
+  isMuted: IsMuted,
+  started: Date,
+  ctx: Ctx,
+) {
+  const offers = (await currentOffers(admin, item.id)).filter((s) => alertable(s, isMuted));
+  const pending = ctx.reasons.get(item.id) ?? [];
   if (offers.length === 0) return;
   const best = offers.reduce((a, b) => (b.price_cents < a.price_cents ? b : a));
+  const atBest = { seller: best.seller_name, link: best.product_link_id, series: best.seller };
 
   if (item.purchased_at) {
     const c = evaluateAfterPurchase(best.price_cents, item.purchased_price_cents);
-    if (c) {
-      await raiseAlert(admin, ctx, item, rules, c, {
-        linkId: best.product_link_id,
-        seller: best.seller,
-        sellerName: best.seller_name,
-        userId: null,
-        itemWide: true,
-        cooldownHours: 72,
-      });
-    }
+    if (!c) return;
+    const prev = await lastReason(admin, item.id, "price_after_purchase");
+    if (prev && !(c.priceCents < prev.priceCents) && Date.now() - prev.ts < 72 * 3_600_000) return;
+    const reason: Reason = { ...c, ...atBest };
+    await insertEvent(admin, ctx, item, buildEvent([reason], { pushMinPct: rules.push_min_pct })!, [reason], null);
     return;
   }
 
-  const { data: linkRows } = await admin.from("product_links").select("id").eq("wish_item_id", item.id);
-  const linkIds = (linkRows ?? []).map((l) => l.id as string);
+  // History of the item's links. A comparison page's anonymous low (aggregator link, seller '') is left
+  // out: it is not a shop you can buy from and it would duplicate the shops' own prices.
+  const { data: linkData } = await admin.from("product_links").select("id, shops(strategy)").eq("wish_item_id", item.id);
+  const linkList = (linkData ?? []) as unknown as { id: string; shops: { strategy: string } | null }[];
+  const linkIds = linkList.map((l) => l.id);
+  const directIds = linkList.filter((l) => l.shops?.strategy !== "aggregator").map((l) => l.id);
+  const aggIds = new Set(linkList.filter((l) => l.shops?.strategy === "aggregator").map((l) => l.id));
   const before = started.toISOString();
-  const since30 = new Date(started.getTime() - 30 * 86_400_000).toISOString();
+  const since60 = new Date(started.getTime() - 60 * DAY).toISOString();
+  const since30ms = started.getTime() - 30 * DAY;
 
-  const [minQ, countQ, recentQ] = await Promise.all([
-    admin.from("price_observations").select("price_cents").in("product_link_id", linkIds).lt("ts", before)
+  const [sellerMin, directMin, countQ, recentQ] = await Promise.all([
+    admin.from("price_observations").select("price_cents").in("product_link_id", linkIds).neq("seller", "").lt("ts", before)
+      .order("price_cents").limit(1).maybeSingle(),
+    admin.from("price_observations").select("price_cents").in("product_link_id", directIds).lt("ts", before)
       .order("price_cents").limit(1).maybeSingle(),
     admin.from("price_observations").select("id", { count: "exact", head: true }).in("product_link_id", linkIds).lt("ts", before),
-    admin.from("price_observations").select("ts, price_cents, availability, lowest_30d_cents").in("product_link_id", linkIds)
-      .gte("ts", since30).lt("ts", before).limit(5000),
+    admin.from("price_observations").select("ts, price_cents, availability, lowest_30d_cents, seller, product_link_id")
+      .in("product_link_id", linkIds).gte("ts", since60).lt("ts", before).order("ts", { ascending: false }).limit(10000),
   ]);
-  const med = dailyMinMedian(((recentQ.data ?? []) as ObsRow[]).map(toObs));
+  const prevMin = [sellerMin.data?.price_cents, directMin.data?.price_cents].filter((v): v is number => v != null);
 
-  const candidates = evaluateItemRules({
+  const recent = ((recentQ.data ?? []) as (ObsRow & { seller: string; product_link_id: string })[])
+    .filter((r) => !(r.seller === "" && aggIds.has(r.product_link_id)));
+  const obs30 = recent.filter((r) => Date.parse(r.ts) >= since30ms).map(toObs);
+  const med = dailyMinMedian(obs30);
+
+  const { candidates, next } = evaluateItemRules({
     bestCents: best.price_cents,
-    prevMinCents: minQ.data?.price_cents ?? null,
+    prevMinCents: prevMin.length ? Math.min(...prevMin) : null,
     prevObsCount: countQ.count ?? 0,
     medianCents: med.median,
     medianDays: med.days,
     targetCents: item.target_price_cents,
-  }, rules);
-
-  for (const c of candidates) {
-    await raiseAlert(admin, ctx, item, rules, c, {
-      linkId: best.product_link_id,
-      seller: best.seller,
-      sellerName: best.seller_name,
-      userId: null,
-      itemWide: true,
-    });
+  }, rules, item.alert_state);
+  if (JSON.stringify(next) !== JSON.stringify(item.alert_state)) {
+    await admin.from("wish_items").update({ alert_state: next }).eq("id", item.id);
   }
+
+  const reasons: Reason[] = [...candidates.map((c) => ({ ...c, ...atBest })), ...pending];
+  if (reasons.length === 0) return;
+
+  // Warnings that keep a "deal" honest.
+  const warnings: string[] = [];
+  const claim = claimCheck(best.price_cents, best.lowest_30d_cents, best.own_low_30d_cents);
+  if (claim && claim.kind !== "ok") warnings.push(describeClaim(claim));
+  const low60 = recent.filter((r) => r.availability !== "out_of_stock").reduce<ObsRow | null>(
+    (a, b) => (!a || b.price_cents < a.price_cents ? b : a),
+    null,
+  );
+  const inflated = low60 != null && meaningfulDrop(best.price_cents, low60.price_cents) &&
+    best.price_cents > low60.price_cents * 1.05;
+  if (inflated) warnings.push(`Hinta oli alempi ${fiDay(low60!.ts)}: ${eur(low60!.price_cents)}.`);
+
+  const draft = buildEvent(reasons, { pushMinPct: rules.push_min_pct, warnings, inflated });
+  if (draft) await insertEvent(admin, ctx, item, draft, reasons, null);
 }
 
 /**
@@ -463,7 +614,7 @@ async function deliverPushes(
   admin: SupabaseClient,
   household: HouseholdRow | undefined,
   householdId: string,
-  fresh: PendingAlert[],
+  fresh: PendingPush[],
   ctx: { errors: { url: string; error: string }[] },
 ) {
   if (inQuietHours(household)) {
@@ -473,8 +624,8 @@ async function deliverPushes(
   const { data: deferredRows } = await admin.from("alert_events")
     .select("id, wish_item_id, seller, message, wish_items(name)")
     .eq("household_id", householdId).eq("push_deferred", true).eq("push_sent", false)
-    .gt("ts", new Date(Date.now() - 24 * 3_600_000).toISOString());
-  const deferred: PendingAlert[] = ((deferredRows ?? []) as unknown as {
+    .gt("ts", new Date(Date.now() - DAY).toISOString());
+  const deferred: PendingPush[] = ((deferredRows ?? []) as unknown as {
     id: number; wish_item_id: string; seller: string; message: string; wish_items: { name: string } | null;
   }[]).map((r) => ({ id: r.id, itemId: r.wish_item_id, itemName: r.wish_items?.name ?? "", seller: r.seller, message: r.message }));
   const all = [...deferred, ...fresh.filter((a) => !deferred.some((d) => d.id === a.id))];
@@ -508,7 +659,7 @@ async function deliverDeferredOnly(admin: SupabaseClient): Promise<number> {
   return served;
 }
 
-async function sendAlertPushes(admin: SupabaseClient, householdId: string, alerts: PendingAlert[]) {
+async function sendAlertPushes(admin: SupabaseClient, householdId: string, alerts: PendingPush[]) {
   if (alerts.length <= 3) {
     const total = { sent: 0, failed: 0, errors: [] as string[] };
     for (const a of alerts) {
