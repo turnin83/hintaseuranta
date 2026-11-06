@@ -247,6 +247,7 @@ kauppa, jolla alin hinta oli).
   kopioi tuotteen nimen leikepöydälle, avaa hintaopas.fi:n ja siirtää sovelluksen tuotteen lisäysnäkymään.
   Kun käyttäjä palaa kopioituaan tuotesivun osoitteen, lisäysnäkymä lukee leikepöydän ja esikatselee linkin
   (Android kysyy luvan kerran; iOS:ssä *Liitä*-painike).
+- Toivelistan tagirivin lopussa on suodatin *Ilman hintaopasta* (näkyy, kun jokin tuote on ilman hintaopas-linkkiä).
 
 ## hinta.fi: ehdotus, siirtyneet sivut ja estot
 

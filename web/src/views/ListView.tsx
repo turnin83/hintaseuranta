@@ -12,6 +12,7 @@ import { IconAlert, IconArrowDown, IconArrowUp, IconCheck, IconPlus } from "../c
 type Mode = "list" | "groups";
 type Density = "cards" | "compact";
 const UNTAGGED = "\u0000untagged";
+const NO_HINTAOPAS = "\u0000no-hintaopas"; // items without a hintaopas.fi link (no price history)
 
 // View preferences: stored on this device, per signed-in user (never shared with the household).
 function usePref<T extends string>(name: string, initial: T): [T, (v: T) => void] {
@@ -42,6 +43,7 @@ export function ListView() {
   const [density, setDensity] = usePref<Density>("list-density", "cards");
   const [query, setQuery] = useState("");
   const [trend, setTrend] = useState<Map<string, number[]>>(new Map());
+  const [withHintaopas, setWithHintaopas] = useState<Set<string> | null>(null);
 
   useEffect(() => {
     supabase
@@ -53,6 +55,8 @@ export function ListView() {
         if (error) setError(error.message);
         else setItems(data as WishSummary[]);
       });
+    supabase.from("product_links").select("wish_item_id, shops!inner(domain)").eq("active", true).eq("shops.domain", "hintaopas.fi")
+      .then(({ data }) => setWithHintaopas(new Set((data ?? []).map((l) => l.wish_item_id as string))));
     supabase.from("v_item_daily").select("wish_item_id, day, min_cents").order("day").then(({ data }) => {
       const m = new Map<string, number[]>();
       for (const r of (data ?? []) as { wish_item_id: string; min_cents: number }[]) {
@@ -65,12 +69,23 @@ export function ListView() {
   const base = (items ?? []).filter((i) => !i.purchased_at && (showInactive || i.active));
   const tagCounts = useMemo(() => countTags(base), [items, showInactive]);
   const untaggedCount = base.filter((i) => i.tags.length === 0).length;
+  const noHintaopas = (i: WishSummary) => withHintaopas != null && !withHintaopas.has(i.id);
+  const noHintaopasCount = base.filter(noHintaopas).length;
   // A remembered tag that no longer exists falls back to "all".
-  const activeTag = tag === UNTAGGED ? (untaggedCount ? tag : "") : tagCounts.some((t) => t.tag === tag) ? tag : "";
+  const activeTag = tag === UNTAGGED
+    ? (untaggedCount ? tag : "")
+    : tag === NO_HINTAOPAS
+    ? (noHintaopasCount ? tag : "")
+    : tagCounts.some((t) => t.tag === tag)
+    ? tag
+    : "";
 
   const q = query.trim().toLocaleLowerCase("fi");
   const visible = base
-    .filter((i) => !activeTag || (activeTag === UNTAGGED ? i.tags.length === 0 : hasTag(i.tags, activeTag)))
+    .filter((i) =>
+      !activeTag ||
+      (activeTag === UNTAGGED ? i.tags.length === 0 : activeTag === NO_HINTAOPAS ? noHintaopas(i) : hasTag(i.tags, activeTag))
+    )
     .filter((i) => !q || i.name.toLocaleLowerCase("fi").includes(q) || i.tags.some((t) => t.toLocaleLowerCase("fi").includes(q)))
     .sort((a, b) => Number(b.unread_alerts > 0) - Number(a.unread_alerts > 0) || a.priority - b.priority);
 
@@ -114,7 +129,7 @@ export function ListView() {
               onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
             />
           )}
-          {hasTags && (
+          {(hasTags || noHintaopasCount > 0) && (
             <div class="list-controls">
               <div class="chips-scroll" role="group" aria-label="Suodata tagilla">
                 <button class="filter-chip" aria-pressed={!activeTag} onClick={() => setTag("")}>
@@ -128,6 +143,11 @@ export function ListView() {
                 {untaggedCount > 0 && (
                   <button class="filter-chip" aria-pressed={activeTag === UNTAGGED} onClick={() => setTag(activeTag === UNTAGGED ? "" : UNTAGGED)}>
                     Ilman tagia <span class="n">{untaggedCount}</span>
+                  </button>
+                )}
+                {noHintaopasCount > 0 && (
+                  <button class="filter-chip" aria-pressed={activeTag === NO_HINTAOPAS} onClick={() => setTag(activeTag === NO_HINTAOPAS ? "" : NO_HINTAOPAS)}>
+                    Ilman hintaopasta <span class="n">{noHintaopasCount}</span>
                   </button>
                 )}
               </div>
