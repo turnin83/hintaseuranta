@@ -10,7 +10,7 @@
 // optional warning; whether it is pushed depends on how significant it is (push_min_pct).
 //
 // Rules are merged DEFAULT_RULES <- household defaults <- item overrides; items store only overrides.
-import type { Availability } from "./types.ts";
+import type { Availability, PricePoint } from "./types.ts";
 
 export type RuleName =
   | "below_target"
@@ -107,6 +107,38 @@ const UNAVAILABLE: Availability[] = ["out_of_stock"];
 /** A change worth telling: at least 1 € and 1 %. */
 export function meaningfulDrop(fromCents: number, toCents: number): boolean {
   return fromCents - toCents >= 100 && toCents <= fromCents * 0.99;
+}
+
+/**
+ * Price history from before tracking began (hintaopas.fi) is stored as daily observations of this pseudo
+ * seller on the comparison link. It counts for the usual price, the all-time low, deal checks and
+ * alerts, but is not a shop: v_series leaves it out.
+ */
+export const HISTORY_SELLER = "#history";
+
+export type HistoryDay = { ts: string; priceCents: number; shop: string | null };
+const DAY_MS = 86_400_000;
+
+/**
+ * Change points -> one value per UTC day (at 12:00) from the first point up to, not including, the day
+ * of `untilMs` (when our own tracking began). Each day takes the latest point at or before its noon.
+ */
+export function expandHistory(points: PricePoint[], untilMs: number): HistoryDay[] {
+  const sorted = [...points].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+  if (!sorted.length) return [];
+  const noon = (ms: number) => {
+    const d = new Date(ms);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12);
+  };
+  const out: HistoryDay[] = [];
+  const end = noon(untilMs) - DAY_MS; // last full day before tracking
+  let i = 0;
+  let cur: PricePoint | null = null;
+  for (let day = noon(Date.parse(sorted[0].ts)); day <= end; day += DAY_MS) {
+    while (i < sorted.length && Date.parse(sorted[i].ts) <= day) cur = sorted[i++];
+    if (cur) out.push({ ts: new Date(day).toISOString(), priceCents: cur.priceCents, shop: cur.shop });
+  }
+  return out;
 }
 
 /** A price that fell at least this much since the last reading is read again before it is believed. */

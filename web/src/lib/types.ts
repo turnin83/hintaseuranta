@@ -28,6 +28,8 @@ export type WishSummary = {
   failing_links: number;
   last_fetched_at: string | null;
   unread_alerts: number;
+  /** days of price history from before tracking (hintaopas.fi) */
+  history_days?: number;
 };
 
 export type Shop = {

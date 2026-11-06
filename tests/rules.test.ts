@@ -21,6 +21,7 @@ import {
   type Reason,
   bigDrops,
   confirmDrops,
+  expandHistory,
 } from "../supabase/functions/_shared/rules.ts";
 
 const DAY = 86_400_000;
@@ -271,4 +272,23 @@ test("big drop: confirmed by the re-read, a one-off slip is replaced, otherwise 
   r = confirmDrops([o("Power", 49000), o("Gigantti", 20000)], last, [o("Power", 48000)]);
   assert.deepEqual(r.offers, [o("Power", 49000)]);
   assert.deepEqual(r.unconfirmed, [o("Gigantti", 20000)]);
+});
+
+test("price history: change points become one value per day until tracking began", () => {
+  const points = [
+    { ts: "2026-10-28T21:00:00Z", priceCents: 17200, shop: "Proshop" },
+    { ts: "2026-10-30T21:00:00Z", priceCents: 17171, shop: "Proshop" },
+    { ts: "2026-11-01T22:00:00Z", priceCents: 12900, shop: "Gigantti" },
+  ];
+  const days = expandHistory(points, Date.parse("2026-11-03T19:58:00Z"));
+  // 28.10. noon is before the first point (21:00) -> the first day is 29.10.; last day 2.11.
+  assert.deepEqual(days.map((d) => [d.ts.slice(0, 10), d.priceCents, d.shop]), [
+    ["2026-10-29", 17200, "Proshop"],
+    ["2026-10-30", 17200, "Proshop"],
+    ["2026-10-31", 17171, "Proshop"],
+    ["2026-11-01", 17171, "Proshop"],
+    ["2026-11-02", 12900, "Gigantti"],
+  ]);
+  assert.deepEqual(expandHistory([], Date.now()), []);
+  assert.deepEqual(expandHistory(points, Date.parse("2026-10-29T08:00:00Z")), []); // tracking began first
 });

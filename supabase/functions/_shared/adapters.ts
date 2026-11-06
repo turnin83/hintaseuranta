@@ -1,6 +1,6 @@
 // Shop/aggregator-specific adapters. Only for data JSON-LD does not carry.
 // Each adapter gets the generic JSON-LD result (may be null) and may enrich or replace it.
-import type { Availability, Offer, PageData } from "./types.ts";
+import type { Availability, Offer, PageData, PricePoint } from "./types.ts";
 import { decodeEntities, parsePrice, toCents } from "./jsonld.ts";
 
 export type Adapter = (html: string, url: string, base: PageData | null) => PageData | null;
@@ -86,6 +86,27 @@ export function nextFlightText(html: string): string {
   return flight;
 }
 
+/**
+ * "Hintahistoria" chart data: the lowest price on the market as change points (about 3 months, prices
+ * in cents). Prices that need a paid membership are left out.
+ */
+function hintaopasHistory(flight: string): PricePoint[] {
+  const key = '"historyItems":';
+  const at = flight.indexOf(key);
+  const raw = at < 0 ? null : sliceJson(flight, at + key.length);
+  if (!raw) return [];
+  let items: Record<string, any>[];
+  try {
+    items = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  return items
+    .filter((x) => typeof x?.date === "string" && typeof x?.price === "number" && x.price > 0 && !x.isPaidMembership)
+    .map((x) => ({ ts: x.date as string, priceCents: Math.round(x.price), shop: typeof x.shopName === "string" ? x.shopName : null }))
+    .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+}
+
 const hintaopas: Adapter = (html, _url, base) => {
   const flight = nextFlightText(html);
   const key = '"offerRows":';
@@ -124,6 +145,7 @@ const hintaopas: Adapter = (html, _url, base) => {
   return {
     kind: "aggregator",
     source: "adapter:hintaopas",
+    history: hintaopasHistory(flight),
     name: base?.name ?? null,
     ean: base?.ean ?? null,
     model: base?.model ?? null,

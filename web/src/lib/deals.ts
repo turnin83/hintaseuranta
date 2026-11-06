@@ -42,8 +42,10 @@ export function assessDeal(i: WishSummary, obsCount: number): DealAssessment {
   const tier = discountPct == null ? null : TIERS.find((t) => discountPct >= t.min)?.tier ?? null;
   const targetHit = i.target_price_cents != null && p <= i.target_price_cents;
   // "All-time low" only when the price really is below its usual level, not merely unchanged.
-  const allTimeLow = i.min_all_cents != null && p <= i.min_all_cents && med != null && p < med * 0.98 && obsCount >= MIN_OBS;
-  const lowConfidence = med == null || obsCount < MIN_OBS;
+  // Price history from before tracking counts as seen prices too.
+  const seen = obsCount + (i.history_days ?? 0);
+  const allTimeLow = i.min_all_cents != null && p <= i.min_all_cents && med != null && p < med * 0.98 && seen >= MIN_OBS;
+  const lowConfidence = med == null || seen < MIN_OBS;
 
   const warnings: string[] = [];
   const claim = claimCheck(p, i.best_claim_cents, i.best_own_low_cents);

@@ -201,3 +201,15 @@ test("Power API: campaign comparison price", () => {
   assert.equal(powerReferenceCents(p, after), null); // campaign over
   assert.equal(powerReferenceCents({ price: 549, minimumPreviousPriceInfo: { minimumPrice: 549 } }, during), null); // not higher
 });
+
+test("hintaopas: price history (market low change points) and shop's before-price", () => {
+  const p = extractPage(fixture("hintaopas-lg27g610"), "https://hintaopas.fi/product.php?p=15634012")!;
+  const gigantti = p.offers.find((o) => o.seller === "Gigantti")!;
+  assert.equal(gigantti.priceCents, 12900);
+  assert.equal(gigantti.lowest30dCents, 24900); // Gigantti's own "before" price
+  const h = p.history!;
+  assert.equal(h.length, 38);
+  assert.deepEqual(h[0], { ts: "2026-08-07T21:00:00Z", priceCents: 17170, shop: "Proshop" });
+  assert.deepEqual(h.at(-1), { ts: "2026-11-01T22:00:00Z", priceCents: 12900, shop: "Gigantti" });
+  assert.ok(h.every((x, i) => i === 0 || Date.parse(x.ts) >= Date.parse(h[i - 1].ts)));
+});

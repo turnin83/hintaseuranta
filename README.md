@@ -228,6 +228,23 @@ Kaupan ilmoittama "alin hinta 30 pv ennen kampanjaa" luetaan: Verkkokauppa.com (
 (`originalPrice`) ja Power (julkinen tuote-API `/api/v2/products?ids=`, `minimumPreviousPriceInfo`, vain
 kampanjan aikana).
 
+## Hintahistoria ennen seurannan alkua (hintaopas.fi)
+
+Jos tuote lisätään kesken alennuksen, oma 30 päivän mediaani olisi alennushinta, eikä alennusta huomattaisi.
+Siksi hintaopas.fi-linkin tuotesivulta luetaan *Hintahistoria* (markkinan alin hinta noin 3 kk, muutospisteinä;
+maksulliset jäsenhinnat pois). Kerran linkkiä kohden historiasta tallennetaan päiväkohtaiset arvot tuotteen
+ensimmäistä omaa havaintoa edeltäviltä päiviltä pseudomyyjänä `#history` (`price_observations.history_shop` =
+kauppa, jolla alin hinta oli).
+
+- Historia lasketaan mukaan tavalliseen hintaan (30 pv mediaani), alimpaan hintaan, tarjousarvioihin ja
+  hälytyksiin. Uusi tuote, jolla on historia, ei aloita hiljaa: jos alennus on jo päällä, siitä tulee hälytys heti.
+- Se ei ole kauppa: `v_series` jättää sen pois hintalistasta. Hintakäyrässä se näkyy harmaana viivana.
+- *Hinta oli alempi* -varoitukset kertovat päivän ja kaupan; tuotesivun *Alin koskaan* samoin.
+- Ostettu-kortti: tavallinen hinta lasketaan ostopäivää edeltäviltä 30 päivältä (muokattavissa, *Laske
+  historiasta*), ja jos tuote oli 3 kk aikana halvempi, siitä varoitetaan.
+- hinta.fi:n historiaa ei lueta: sen `robots.txt` kieltää historiasivut (`/*/*/historia`) ja `ajax.php`:n.
+  hintaoppaan haku on myös kielletty roboteilta, joten tuotesivulla on painike, joka avaa haun selaimeen.
+
 ## Black Friday -viikko
 
 Black Week -kampanja nostaa hakutiheyden automaattisesti tunnin välein 20.–30.11. (ks. Kampanjat).

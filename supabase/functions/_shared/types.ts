@@ -28,6 +28,11 @@ export type PageData = {
   sku: string | null;
   image: string | null;
   offers: Offer[];
+  // The market's lowest price over time, as change points (hintaopas.fi: ~3 months before today)
+  history?: PricePoint[];
 };
+
+/** From `ts` on, the lowest price on the market was `priceCents` (at `shop`). */
+export type PricePoint = { ts: string; priceCents: number; shop: string | null };
 
 export type FetchStrategy = "direct" | "aggregator" | "blocked";

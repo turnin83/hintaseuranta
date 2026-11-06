@@ -17,6 +17,10 @@ import { AlertEntry } from "../components/AlertEntry.tsx";
 import type { Shop } from "../lib/types.ts";
 import { AFTER_PURCHASE_DAYS, claimCheck, describeClaim, diffRules, mergeRules, type Rules } from "@shared/rules.ts";
 import { RulesForm, rulesSummary } from "../components/RulesForm.tsx";
+import { fiDay, type LowPoint, lowestBetween, PRICE_ROW_COLS, type PriceRow, usualPriceBefore } from "../lib/history.ts";
+
+const DAY = 86_400_000;
+const HINTAOPAS = "hintaopas.fi";
 
 const RANGES = [
   { key: "30", label: "30 pv", days: 30 },
@@ -33,6 +37,7 @@ export function ItemView({ id }: { id: string }) {
   const [household, setHousehold] = useState<{ id: string; muted_sellers: string[] } | null>(null);
   const [points, setPoints] = useState<ChartPoint[]>([]);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
+  const [lowest, setLowest] = useState<LowPoint | null>(null);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("30");
   const [missing, setMissing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -73,14 +78,37 @@ export function ItemView({ id }: { id: string }) {
     );
   }, [series, links]);
 
+  const hasHistory = (item?.history_days ?? 0) > 0;
   const chartSeries: ChartSeries[] = useMemo(
-    () => orderedSeries.slice(0, MAX_SERIES).map((s, i) => ({
-      key: `${s.product_link_id}|${s.seller}`,
-      label: s.seller_name,
-      colorVar: `--s${i + 1}`,
-    })),
-    [orderedSeries],
+    () => [
+      ...orderedSeries.slice(0, MAX_SERIES).map((s, i) => ({
+        key: `${s.product_link_id}|${s.seller}`,
+        label: s.seller_name,
+        colorVar: `--s${i + 1}`,
+      })),
+      // Market low before tracking began (hintaopas.fi), in a neutral ink.
+      ...(hasHistory
+        ? links.filter((l) => l.shops?.domain === HINTAOPAS).map((l) => ({
+          key: `${l.id}|#history`,
+          label: "Hintahistoria (hintaopas)",
+          colorVar: "--text-3",
+        }))
+        : []),
+    ],
+    [orderedSeries, links, hasHistory],
   );
+
+  // Where and when the all-time low was (incl. price history from before tracking).
+  useEffect(() => {
+    if (links.length === 0) return setLowest(null);
+    supabase.from("price_observations").select(PRICE_ROW_COLS).in("product_link_id", links.map((l) => l.id))
+      .order("price_cents").order("ts", { ascending: false }).limit(1)
+      .then(({ data }) => {
+        const rows = (data ?? []) as PriceRow[];
+        const l = rows[0] ? links.find((x) => x.id === rows[0].product_link_id) : undefined;
+        setLowest(lowestBetween(rows, 0, Date.now() + DAY, (r) => r.seller || l?.shops?.name || l?.shops?.domain || null));
+      });
+  }, [links]);
 
   useEffect(() => {
     if (links.length === 0) {
@@ -207,6 +235,9 @@ export function ItemView({ id }: { id: string }) {
           <div>
             <dt>Alin koskaan</dt>
             <dd class="num">{item.min_all_cents != null ? eur(item.min_all_cents) : "–"}</dd>
+            {lowest && lowest.cents === item.min_all_cents && (
+              <dd class="meta">{fiDay(lowest.ts)}{lowest.where ? ` · ${lowest.where}` : ""}</dd>
+            )}
           </div>
           <div>
             <dt>30 pv mediaani</dt>
@@ -219,7 +250,21 @@ export function ItemView({ id }: { id: string }) {
         </dl>
       </div>
 
-      <PurchasePanel item={item} onSaved={reload} />
+      {links.length > 0 && (hasHistory ? (
+        <p class="meta">Mukana hintahistoria hintaoppaasta {item.history_days} päivältä ennen seurannan alkua.</p>
+      ) : !links.some((l) => l.shops?.domain === HINTAOPAS) && (
+        <div class="notice stack-sm">
+          <span>Hintaopas-linkki tuo hintahistorian 3 kk taaksepäin, joten näet, onko hinta oikeasti alennettu.</span>
+          <div class="actions">
+            <a class="btn small" href={`https://hintaopas.fi/search?search=${encodeURIComponent(eans[0] ?? item.name)}`} target="_blank" rel="noopener noreferrer">
+              <IconExternal /> Etsi hintaoppaasta
+            </a>
+            <a class="btn small" href={`#/add?item=${id}`}><IconPlus /> Lisää linkki</a>
+          </div>
+        </div>
+      ))}
+
+      <PurchasePanel item={item} links={links} onSaved={reload} />
 
       <section class="section" aria-labelledby="h-history">
         <div class="section-head">
@@ -584,17 +629,51 @@ function RulesPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void 
   );
 }
 
-function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }) {
+/** Observations of the links around a moment: [untilMs - days, untilMs). */
+async function loadRows(links: ProductLink[], untilMs: number, days: number): Promise<PriceRow[]> {
+  if (links.length === 0) return [];
+  const { data } = await supabase.from("price_observations").select(PRICE_ROW_COLS)
+    .in("product_link_id", links.map((l) => l.id))
+    .gte("ts", new Date(untilMs - days * DAY).toISOString()).lt("ts", new Date(untilMs).toISOString())
+    .limit(10000);
+  return (data ?? []) as PriceRow[];
+}
+
+function PurchasePanel({ item, links, onSaved }: { item: WishSummary; links: ProductLink[]; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [price, setPrice] = useState(centsToInput(item.best_price_cents));
   const [seller, setSeller] = useState(item.best_seller ?? "");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
+  const [rows, setRows] = useState<PriceRow[]>([]);
+  const [editRef, setEditRef] = useState<string | null>(null);
 
-  if (item.purchased_at) {
+  // Prices in the 90 days before the purchase: the usual price and any lower price before it.
+  const boughtMs = item.purchased_at ? Date.parse(item.purchased_at) : null;
+  useEffect(() => {
+    if (boughtMs != null) loadRows(links, boughtMs, 90).then(setRows);
+  }, [boughtMs, links]);
+
+  if (item.purchased_at && boughtMs != null) {
     const saved = item.purchased_ref_cents != null && item.purchased_price_cents != null
       ? item.purchased_ref_cents - item.purchased_price_cents
       : null;
+    const nameOf = (r: PriceRow) => {
+      const l = links.find((x) => x.id === r.product_link_id);
+      return r.seller || l?.shops?.name || l?.shops?.domain || null;
+    };
+    const lowBefore = lowestBetween(rows, boughtMs - 90 * DAY, boughtMs, nameOf);
+    const wasCheaper = lowBefore != null && item.purchased_price_cents != null &&
+      item.purchased_price_cents - lowBefore.cents >= 100 && lowBefore.cents < item.purchased_price_cents * 0.99;
+    const saveRef = async () => {
+      const cents = editRef?.trim() ? parseEurInput(editRef) : null;
+      if (editRef?.trim() && cents == null) return toast("Hinta ei ole kelvollinen luku");
+      const { error } = await supabase.from("wish_items").update({ purchased_ref_cents: cents }).eq("id", item.id);
+      if (error) return toast(error.message);
+      setEditRef(null);
+      toast("Tavallinen hinta tallennettu");
+      onSaved();
+    };
     const watchDays = Math.max(0, AFTER_PURCHASE_DAYS - Math.floor((Date.now() - Date.parse(item.purchased_at)) / 86_400_000));
     const undo = async () => {
       if (!confirm("Perutaanko ostomerkintä (esim. tuote palautettiin)? Seuranta ja hälytykset jatkuvat, historia säilyy.")) return;
@@ -609,6 +688,40 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
         <strong>Ostettu {new Date(item.purchased_at).toLocaleDateString("fi-FI")}: {eur(item.purchased_price_cents!)}{item.purchased_seller ? `, ${item.purchased_seller}` : ""}</strong>
         {saved != null && saved > 0 && (
           <p class="reco reco-buy">Säästit {eur(saved)} tavalliseen hintaan ({eur(item.purchased_ref_cents!)}) verrattuna.</p>
+        )}
+        {saved != null && saved <= 0 && (
+          <p class="meta num">Tavallinen hinta ostohetkellä {eur(item.purchased_ref_cents!)}: ei säästöä.</p>
+        )}
+        {wasCheaper ? (
+          <p class="claim-warn">
+            <IconAlert width={16} height={16} />
+            <span class="num">
+              Tuote oli aiemmin halvempi: {eur(lowBefore!.cents)} ({[lowBefore!.where, fiDay(lowBefore!.ts)].filter(Boolean).join(", ")}).
+            </span>
+          </p>
+        ) : lowBefore && (
+          <p class="meta num">Alin hinta 3 kk ennen ostoa: {eur(lowBefore.cents)} ({[lowBefore.where, fiDay(lowBefore.ts)].filter(Boolean).join(", ")}).</p>
+        )}
+        {editRef == null ? (
+          <button class="btn ghost small" style="align-self:flex-start" onClick={() => setEditRef(centsToInput(item.purchased_ref_cents))}>
+            Muokkaa tavallista hintaa
+          </button>
+        ) : (
+          <div class="stack-sm">
+            <label class="field"><span>Tavallinen hinta ostohetkellä (€)</span>
+              <input inputMode="decimal" value={editRef} onInput={(e) => setEditRef((e.target as HTMLInputElement).value)} />
+            </label>
+            <p class="meta">Laske historiasta = alimpien päivähintojen mediaani 30 päivältä ennen ostoa (mukana hintaoppaan hintahistoria).</p>
+            <div class="actions">
+              <button class="btn small" onClick={() => {
+                const c = usualPriceBefore(rows, boughtMs);
+                if (c == null) toast("Ostoa edeltävältä ajalta ei ole hintoja");
+                else setEditRef(centsToInput(c));
+              }}>Laske historiasta</button>
+              <button class="btn primary small" onClick={saveRef}>Tallenna</button>
+              <button class="btn ghost small" onClick={() => setEditRef(null)}>Peru</button>
+            </div>
+          </div>
         )}
         {watchDays > 0 ? (
           <p class="meta">Hintaa seurataan vielä {watchDays} pv. Jos se laskee alle ostohinnan, saat ilmoituksen (palautusoikeus tai hintatakuu).</p>
@@ -635,17 +748,20 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
     const cents = parseEurInput(price);
     if (cents == null) return toast("Hinta ei ole kelvollinen luku");
     setBusy(true);
+    // The usual price before the purchase day (not just today's), incl. price history from before tracking.
+    const at = new Date(`${date}T12:00:00`);
+    const ref = usualPriceBefore(await loadRows(links, at.getTime(), 30), at.getTime()) ?? item.median_30d_cents;
     const { error } = await supabase.from("wish_items").update({
-      purchased_at: new Date(`${date}T12:00:00`).toISOString(),
+      purchased_at: at.toISOString(),
       purchased_price_cents: cents,
       purchased_seller: seller.trim() || null,
-      purchased_ref_cents: item.median_30d_cents, // the usual price right now
+      purchased_ref_cents: ref,
       active: false,
     }).eq("id", item.id);
     setBusy(false);
     if (error) toast(error.message);
     else {
-      toast(item.median_30d_cents && item.median_30d_cents > cents ? `Ostettu! Säästit ${eur(item.median_30d_cents - cents)}.` : "Merkitty ostetuksi");
+      toast(ref && ref > cents ? `Ostettu! Säästit ${eur(ref - cents)}.` : "Merkitty ostetuksi");
       onSaved();
     }
   };

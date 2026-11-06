@@ -31,6 +31,8 @@ import {
   evaluateItemRules,
   evaluateSeriesRules,
   type EventDraft,
+  expandHistory,
+  HISTORY_SELLER,
   type ItemAlertState,
   buildEvent,
   meaningfulDrop,
@@ -43,7 +45,7 @@ import {
   type RuleName,
   type Rules,
 } from "../_shared/rules.ts";
-import type { Availability, Offer, PageData } from "../_shared/types.ts";
+import type { Availability, Offer, PageData, PricePoint } from "../_shared/types.ts";
 import { pushToHousehold } from "../_shared/push.ts";
 import { enrichPage } from "../_shared/enrich.ts";
 
@@ -139,7 +141,13 @@ function alertable(s: SeriesRow, isMuted: IsMuted): boolean {
   return !(s.shop_strategy === "aggregator" && s.seller === "") && !isMuted(s.seller_name);
 }
 
-type ObsRow = { ts: string; price_cents: number; availability: string; lowest_30d_cents: number | null };
+type ObsRow = {
+  ts: string;
+  price_cents: number;
+  availability: string;
+  lowest_30d_cents: number | null;
+  history_shop?: string | null;
+};
 
 const toObs = (r: ObsRow): Obs => ({
   ts: Date.parse(r.ts),
@@ -455,6 +463,36 @@ async function readOffers(link: LinkRow, robots: RobotsCache): Promise<ReadResul
   return { ok: true, page, offers };
 }
 
+/**
+ * Comparison page with a price history (hintaopas.fi): once per link, store the market's daily lowest
+ * price for the days before the item was first tracked (HISTORY_SELLER), so a product added in the middle
+ * of a sale is judged against the price before the sale.
+ */
+async function backfillHistory(admin: SupabaseClient, link: LinkRow, points: PricePoint[]) {
+  const { count } = await admin.from("price_observations").select("id", { count: "exact", head: true })
+    .eq("product_link_id", link.id).eq("seller", HISTORY_SELLER);
+  if (count) return;
+  const { data: ids } = await admin.from("product_links").select("id").eq("wish_item_id", link.wish_item_id);
+  const { data: first } = await admin.from("price_observations").select("ts")
+    .in("product_link_id", (ids ?? []).map((r) => r.id as string)).neq("seller", HISTORY_SELLER)
+    .order("ts").limit(1).maybeSingle();
+  const days = expandHistory(points, first ? Date.parse(first.ts) : Date.now());
+  if (days.length === 0) return;
+  const { error } = await admin.from("price_observations").insert(days.map((d) => ({
+    user_id: link.user_id,
+    household_id: link.household_id,
+    product_link_id: link.id,
+    seller: HISTORY_SELLER,
+    ts: d.ts,
+    price_cents: d.priceCents,
+    currency: "EUR",
+    availability: "in_stock",
+    source: "history",
+    history_shop: d.shop,
+  })));
+  if (error) throw error;
+}
+
 /** Fetches one link, stores observations and collects shop-level reasons. Returns true on success. */
 async function processLink(
   admin: SupabaseClient,
@@ -499,6 +537,7 @@ async function processLink(
   if (!read.ok) return fail(read.status, read.error);
   const page = read.page;
   let offers = read.offers;
+  if (page.history?.length) await backfillHistory(admin, link, page.history);
   if (page.kind === "aggregator") {
     const others = await otherLinks(admin, link);
     await noteCrossChecks(admin, others, page.offers, shop.name || shop.domain, now);
@@ -632,7 +671,7 @@ async function evaluateItem(
     admin.from("price_observations").select("price_cents").in("product_link_id", directIds).lt("ts", before)
       .order("price_cents").limit(1).maybeSingle(),
     admin.from("price_observations").select("id", { count: "exact", head: true }).in("product_link_id", linkIds).lt("ts", before),
-    admin.from("price_observations").select("ts, price_cents, availability, lowest_30d_cents, seller, product_link_id")
+    admin.from("price_observations").select("ts, price_cents, availability, lowest_30d_cents, seller, product_link_id, history_shop")
       .in("product_link_id", linkIds).gte("ts", since60).lt("ts", before).order("ts", { ascending: false }).limit(10000),
   ]);
   const prevMin = [sellerMin.data?.price_cents, directMin.data?.price_cents].filter((v): v is number => v != null);
@@ -641,6 +680,9 @@ async function evaluateItem(
     .filter((r) => !(r.seller === "" && aggIds.has(r.product_link_id)));
   const obs30 = recent.filter((r) => Date.parse(r.ts) >= since30ms).map(toObs);
   const med = dailyMinMedian(obs30);
+  // A new item normally starts silently (no baseline yet). With the price history from before tracking
+  // there is one, so a sale that was already on when the item was added is alerted at once.
+  const hasHistory = recent.some((r) => r.seller === HISTORY_SELLER);
 
   const { candidates, next } = evaluateItemRules({
     bestCents: best.price_cents,
@@ -649,7 +691,7 @@ async function evaluateItem(
     medianCents: med.median,
     medianDays: med.days,
     targetCents: item.target_price_cents,
-  }, rules, item.alert_state);
+  }, rules, item.alert_state ?? (hasHistory ? {} : null));
   if (JSON.stringify(next) !== JSON.stringify(item.alert_state)) {
     await admin.from("wish_items").update({ alert_state: next }).eq("id", item.id);
   }
@@ -667,7 +709,10 @@ async function evaluateItem(
   );
   const inflated = low60 != null && meaningfulDrop(best.price_cents, low60.price_cents) &&
     best.price_cents > low60.price_cents * 1.05;
-  if (inflated) warnings.push(`Hinta oli alempi ${fiDay(low60!.ts)}: ${eur(low60!.price_cents)}.`);
+  if (inflated) {
+    const where = low60!.history_shop ? ` (${low60!.history_shop})` : "";
+    warnings.push(`Hinta oli alempi ${fiDay(low60!.ts)}: ${eur(low60!.price_cents)}${where}.`);
+  }
 
   const draft = buildEvent(reasons, { pushMinPct: rules.push_min_pct, warnings, inflated });
   if (draft) await insertEvent(admin, ctx, item, draft, reasons, null);
