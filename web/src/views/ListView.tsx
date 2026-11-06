@@ -55,7 +55,9 @@ export function ListView() {
         if (error) setError(error.message);
         else setItems(data as WishSummary[]);
       });
-    supabase.from("product_links").select("wish_item_id, shops!inner(domain)").eq("active", true).eq("shops.domain", "hintaopas.fi")
+    // Any hintaopas link counts: one whose shops are all followed directly is switched off after its first
+    // fetch, which already stored the price history.
+    supabase.from("product_links").select("wish_item_id, shops!inner(domain)").eq("shops.domain", "hintaopas.fi")
       .then(({ data }) => setWithHintaopas(new Set((data ?? []).map((l) => l.wish_item_id as string))));
     supabase.from("v_item_daily").select("wish_item_id, day, min_cents").order("day").then(({ data }) => {
       const m = new Map<string, number[]>();
@@ -69,7 +71,7 @@ export function ListView() {
   const base = (items ?? []).filter((i) => !i.purchased_at && (showInactive || i.active));
   const tagCounts = useMemo(() => countTags(base), [items, showInactive]);
   const untaggedCount = base.filter((i) => i.tags.length === 0).length;
-  const noHintaopas = (i: WishSummary) => withHintaopas != null && !withHintaopas.has(i.id);
+  const noHintaopas = (i: WishSummary) => withHintaopas != null && !withHintaopas.has(i.id) && !(i.history_days ?? 0);
   const noHintaopasCount = base.filter(noHintaopas).length;
   // A remembered tag that no longer exists falls back to "all".
   const activeTag = tag === UNTAGGED
