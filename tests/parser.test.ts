@@ -213,3 +213,12 @@ test("hintaopas: price history (market low change points) and shop's before-pric
   assert.deepEqual(h.at(-1), { ts: "2026-11-01T22:00:00Z", priceCents: 12900, shop: "Gigantti" });
   assert.ok(h.every((x, i) => i === 0 || Date.parse(x.ts) >= Date.parse(h[i - 1].ts)));
 });
+
+test("botcheck: hinta.fi block page (HTTP 404 with an unban form) is a block, not a missing product", () => {
+  const html = '<html><head><title>Hinta.fi - Pääsy rajoitettu</title></head><body>' +
+    '<form id="hvFormUnban" action="/null_unban.php" method="post"></form></body></html>';
+  const markers = detectBotMarkers(404, new Headers(), html);
+  assert.deepEqual(markers, ["hinta.fi access restricted"]);
+  assert.ok(isBlocked(404, markers));
+  assert.equal(isBlocked(404, detectBotMarkers(404, new Headers(), "<html><title>Not found</title></html>")), false);
+});

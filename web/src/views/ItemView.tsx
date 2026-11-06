@@ -9,7 +9,7 @@ import { PriceChart, type ChartPoint, type ChartSeries } from "../components/Pri
 import { IconAlert, IconExternal, IconPlus, IconRefresh } from "../components/icons.tsx";
 import { TagInput } from "../components/TagInput.tsx";
 import { FindOffers } from "../components/FindOffers.tsx";
-import { setPendingDirectLink } from "../lib/direct-links.ts";
+import { setPendingDirectLink, startHintaopasHunt, takeSuggestHintaFi } from "../lib/direct-links.ts";
 import { assessDeal, priceMismatch } from "../lib/deals.ts";
 import { moveToTrash } from "../lib/trash.ts";
 import { sellerKey, sellerMatchesShop } from "@shared/search.ts";
@@ -38,6 +38,7 @@ export function ItemView({ id }: { id: string }) {
   const [points, setPoints] = useState<ChartPoint[]>([]);
   const [alerts, setAlerts] = useState<AlertEvent[]>([]);
   const [lowest, setLowest] = useState<LowPoint | null>(null);
+  const [suggestHintaFi] = useState(() => takeSuggestHintaFi(id));
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("30");
   const [missing, setMissing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -253,16 +254,24 @@ export function ItemView({ id }: { id: string }) {
       {links.length > 0 && (hasHistory ? (
         <p class="meta">Mukana hintahistoria hintaoppaasta {item.history_days} päivältä ennen seurannan alkua.</p>
       ) : !links.some((l) => l.shops?.domain === HINTAOPAS) && (
-        <div class="notice stack-sm">
-          <span>Hintaopas-linkki tuo hintahistorian 3 kk taaksepäin, joten näet, onko hinta oikeasti alennettu.</span>
-          <div class="actions">
-            <a class="btn small" href={`https://hintaopas.fi/search?search=${encodeURIComponent(eans[0] ?? item.name)}`} target="_blank" rel="noopener noreferrer">
-              <IconExternal /> Etsi hintaoppaasta
-            </a>
-            <a class="btn small" href={`#/add?item=${id}`}><IconPlus /> Lisää linkki</a>
-          </div>
-        </div>
+        <p class="meta">
+          Ei hintahistoriaa ennen seurannan alkua.{" "}
+          <a
+            href="https://hintaopas.fi/"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => {
+              // Name to the clipboard for hintaopas' search; the copied product link is read back on return.
+              setPendingDirectLink(id, "");
+              startHintaopasHunt(id, item.name);
+              toast("Tuotteen nimi kopioitu: liitä se hintaoppaan hakuun");
+              setTimeout(() => go(`#/add?item=${id}`), 300);
+            }}
+          >Hae hintaoppaasta</a>
+        </p>
       ))}
+      {suggestHintaFi && <FindOffers auto itemId={id} itemEans={eans as string[]} onAdded={reload} />}
+      {links.filter(isMovedHintaFi).map((l) => <HintaFiRepair key={l.id} itemId={id} link={l} onDone={reload} />)}
 
       <PurchasePanel item={item} links={links} onSaved={reload} />
 
@@ -626,6 +635,52 @@ function RulesPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void 
         )}
       </div>
     </details>
+  );
+}
+
+/** A hinta.fi product page that is gone (the product moved to a new page). */
+const isMovedHintaFi = (l: ProductLink) =>
+  l.active && l.shops?.domain === "hinta.fi" && l.last_status === "error" && /HTTP 404/.test(l.last_error ?? "");
+
+/** Looks the product up again on hinta.fi by EAN and offers to point the broken link to the new page. */
+function HintaFiRepair({ itemId, link, onDone }: { itemId: string; link: ProductLink; onDone: () => void }) {
+  const [found, setFound] = useState<{ url: string; name: string | null; shops: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    invoke<{ byEan: boolean; product: { url: string; name: string | null; offers: unknown[] } | null; existingLink: unknown }>(
+      "find-offers",
+      { wish_item_id: itemId },
+    ).then((f) => {
+      if (f.byEan && f.product && f.product.url !== link.url && !f.existingLink) {
+        setFound({ url: f.product.url, name: f.product.name, shops: f.product.offers.length });
+      }
+    }).catch(() => { /* the link row shows the error anyway */ });
+  }, [link.id]);
+  if (!found) return null;
+  const swap = async () => {
+    setBusy(true);
+    const { error } = await supabase.from("product_links")
+      .update({ url: found.url, last_status: null, last_error: null, fail_count: 0, failing_since: null })
+      .eq("id", link.id);
+    if (error) {
+      setBusy(false);
+      return toast(error.message);
+    }
+    await invoke("fetch-prices", { link_ids: [link.id] }).catch(() => {});
+    toast("hinta.fi-linkki päivitetty, hintahistoria säilyy");
+    onDone();
+  };
+  return (
+    <div class="notice warn stack-sm">
+      <span>
+        hinta.fi on siirtänyt tuotteen uudelle sivulle (vanha antaa 404). EAN-koodilla löytyi:{" "}
+        <strong>{found.name ?? found.url}</strong>{found.shops ? `, ${found.shops} kauppaa` : ""}.
+      </span>
+      <div class="actions">
+        <button class="btn small primary" disabled={busy} onClick={swap}>Vaihda linkki</button>
+        <a class="btn small ghost" href={found.url} target="_blank" rel="noopener noreferrer"><IconExternal /> Avaa</a>
+      </div>
+    </div>
   );
 }
 

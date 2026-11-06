@@ -9,7 +9,14 @@ import { IconClipboard } from "../components/icons.tsx";
 import { TagInput } from "../components/TagInput.tsx";
 import { findUrl } from "@shared/url.ts";
 import type { SearchHit } from "@shared/search.ts";
-import { clearPendingDirectLink, getPendingDirectLink, removeShopFromComparisonLinks } from "../lib/direct-links.ts";
+import {
+  clearHintaopasHunt,
+  clearPendingDirectLink,
+  getPendingDirectLink,
+  hintaopasHuntFor,
+  markSuggestHintaFi,
+  removeShopFromComparisonLinks,
+} from "../lib/direct-links.ts";
 
 type ItemOpt = { id: string; name: string; eans: string[] };
 
@@ -30,9 +37,12 @@ export function AddView(props: { url: string | null; item: string | null; seller
   const [tags, setTags] = useState<string[]>([]);
   const [sellers, setSellers] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  const hunting = hintaopasHuntFor(targetItem);
 
   useEffect(() => {
-    supabase.from("wish_items").select("id, name, product_links(ean)").is("deleted_at", null).is("purchased_at", null).order("name").then(({ data }) => {
+    // Purchased items are not offered, except the one the user came from (e.g. adding its hintaopas link).
+    const notBought = targetItem ? `purchased_at.is.null,id.eq.${targetItem}` : "purchased_at.is.null";
+    supabase.from("wish_items").select("id, name, product_links(ean)").is("deleted_at", null).or(notBought).order("name").then(({ data }) => {
       const opts = (data ?? []).map((w: { id: string; name: string; product_links: { ean: string | null }[] }) => ({
         id: w.id,
         name: w.name,
@@ -82,6 +92,29 @@ export function AddView(props: { url: string | null; item: string | null; seller
       setLoading(false);
     }
   }
+
+  // Back from another app (hintaopas, a shop): a product link copied there is read and previewed at once.
+  // Android asks once for clipboard access; where reading needs a tap (iOS), the Liitä button remains.
+  useEffect(() => {
+    if (!targetItem) return;
+    let last = "";
+    const tryClipboard = async () => {
+      if (document.visibilityState !== "visible" || preview || loading) return;
+      try {
+        const u = findUrl(await navigator.clipboard.readText());
+        if (u && u !== last) {
+          last = u;
+          runPreview(u);
+        }
+      } catch { /* no permission without a tap */ }
+    };
+    document.addEventListener("visibilitychange", tryClipboard);
+    window.addEventListener("focus", tryClipboard);
+    return () => {
+      document.removeEventListener("visibilitychange", tryClipboard);
+      window.removeEventListener("focus", tryClipboard);
+    };
+  }, [targetItem, preview, loading]);
 
   const paste = async () => {
     try {
@@ -134,12 +167,14 @@ export function AddView(props: { url: string | null; item: string | null; seller
         throw error;
       }
       clearPendingDirectLink();
+      clearHintaopasHunt();
       // A direct shop link replaces the same shop on the item's comparison-site links.
       const removed = page.kind === "shop" && mode === "existing"
         ? await removeShopFromComparisonLinks(wid, { domain: preview.domain, name: preview.shop.name })
         : [];
       const direct = removed.length ? ` ${removed.join(", ")} haetaan nyt suoraan kaupasta, ei vertailusivulta.` : "";
       toast(`Tallennettu, haetaan ensimmäinen hinta…${direct}`);
+      if (mode === "new" && page.kind === "shop" && page.ean) markSuggestHintaFi(wid);
       go(`#/item/${wid}`);
       invoke("fetch-prices", { link_ids: [link.id] })
         .then(() => {
@@ -157,13 +192,25 @@ export function AddView(props: { url: string | null; item: string | null; seller
   return (
     <div class="page stack-lg">
       <div class="stack">
-        <TopBar title={directFor ? `Suora linkki: ${directFor}` : "Lisää tuote"} parent={targetItem ? `#/item/${targetItem}` : "#/"} />
+        <TopBar title={directFor ? `Suora linkki: ${directFor}` : targetItem ? "Lisää linkki" : "Lisää tuote"} parent={targetItem ? `#/item/${targetItem}` : "#/"} />
         {directFor && !preview && (
           <div class="notice">
             Avaa vertailusivulta <strong>{directFor}</strong>, kopioi tuotesivun osoite ja liitä se tähän
             (tai jaa sivu Hinnat-sovellukseen). Tallennuksen jälkeen {directFor} haetaan suoraan kaupasta.
             <div class="actions" style="margin-top:8px">
               <button type="button" class="btn ghost" onClick={() => { clearPendingDirectLink(); go(targetItem ? `#/item/${targetItem}` : "#/"); }}>Peru</button>
+            </div>
+          </div>
+        )}
+        {hunting && !preview && (
+          <div class="notice stack-sm">
+            <span>
+              Tuotteen nimi on leikepöydällä. Liitä se hintaoppaan hakuun, avaa oikea tuote ja kopioi sivun osoite
+              (Jaa → Kopioi). Kun palaat tänne, linkki haetaan automaattisesti, tai paina Liitä.
+            </span>
+            <div class="actions">
+              <a class="btn small" href="https://hintaopas.fi/" target="_blank" rel="noopener noreferrer">Avaa hintaopas.fi</a>
+              <button type="button" class="btn small ghost" onClick={() => { clearHintaopasHunt(); clearPendingDirectLink(); go(`#/item/${targetItem}`); }}>Peru</button>
             </div>
           </div>
         )}

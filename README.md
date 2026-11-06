@@ -243,7 +243,22 @@ kauppa, jolla alin hinta oli).
 - Ostettu-kortti: tavallinen hinta lasketaan ostopäivää edeltäviltä 30 päivältä (muokattavissa, *Laske
   historiasta*), ja jos tuote oli 3 kk aikana halvempi, siitä varoitetaan.
 - hinta.fi:n historiaa ei lueta: sen `robots.txt` kieltää historiasivut (`/*/*/historia`) ja `ajax.php`:n.
-  hintaoppaan haku on myös kielletty roboteilta, joten tuotesivulla on painike, joka avaa haun selaimeen.
+- Hintaopas-linkin lisäys: hintaoppaan haku on kielletty roboteilta, joten tuotesivun *Hae hintaoppaasta*
+  kopioi tuotteen nimen leikepöydälle, avaa hintaopas.fi:n ja siirtää sovelluksen tuotteen lisäysnäkymään.
+  Kun käyttäjä palaa kopioituaan tuotesivun osoitteen, lisäysnäkymä lukee leikepöydän ja esikatselee linkin
+  (Android kysyy luvan kerran; iOS:ssä *Liitä*-painike).
+
+## hinta.fi: ehdotus, siirtyneet sivut ja estot
+
+- Kun uusi tuote lisätään kaupan sivulta ja EAN tunnetaan, tuotesivu hakee saman tuotteen hinta.fi:stä
+  (find-offers) ja näyttää kortin *Sama tuote hinta.fi:ssä*: seuraamattomat kaupat valmiiksi valittuina, yksi
+  napautus lisää ne. Mitään ei näytetä, jos osumaa tai uusia kauppoja ei ole.
+- hinta.fi-linkki, joka antaa HTTP 404: tuotesivu hakee tuotteen EAN-koodilla ja ehdottaa *Vaihda linkki*
+  (sama linkki, uusi osoite, historia säilyy).
+- hinta.fi estää liian tiheästi kysyvän asiakkaan sivulla *Pääsy rajoitettu*, jonka HTTP-tila on 404. Se
+  tunnistetaan estoksi (`botcheck.ts`), ei puuttuvaksi tuotteeksi. Estävän kaupan muut linkit jätetään sillä
+  kierroksella hakematta, eikä estosta tehdä linkkikohtaisia *Linkki ei toimi* -hälytyksiä (tila näkyy
+  Asetuksissa). hinta.fi:n sivujen väli on vähintään 5 s.
 
 ## Black Friday -viikko
 

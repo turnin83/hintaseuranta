@@ -1,6 +1,6 @@
 // "Etsi muista kaupoista": search hinta.fi by the item's EAN (or name) and add untracked shops
 // as one hinta.fi link with the chosen sellers.
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { invoke, supabase } from "../lib/supabase.ts";
 import type { Availability } from "@shared/types.ts";
 import type { SearchHit } from "@shared/search.ts";
@@ -21,7 +21,8 @@ type Found = {
   existingLink: { id: string; sellers: string[] | null } | null;
 };
 
-export function FindOffers(props: { itemId: string; itemEans: string[]; onAdded: () => void }) {
+/** `auto`: search at once by EAN and show only a found product with shops not yet tracked. */
+export function FindOffers(props: { itemId: string; itemEans: string[]; onAdded: () => void; auto?: boolean }) {
   const [found, setFound] = useState<Found | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +43,10 @@ export function FindOffers(props: { itemId: string; itemEans: string[]; onAdded:
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (props.auto) run();
+  }, []);
 
   const add = async () => {
     if (!found?.product || !found.shopId || chosen.size === 0) return;
@@ -76,6 +81,8 @@ export function FindOffers(props: { itemId: string; itemEans: string[]; onAdded:
     }
   };
 
+  if (props.auto && !(found?.product?.offers.some((o) => !o.tracked))) return null;
+
   if (!found) {
     return (
       <div class="stack-sm">
@@ -94,7 +101,7 @@ export function FindOffers(props: { itemId: string; itemEans: string[]; onAdded:
   return (
     <div class="card stack">
       <div class="section-head">
-        <h3 style="flex:1">Muut kaupat</h3>
+        <h3 style="flex:1">{props.auto ? "Sama tuote hinta.fi:ssä" : "Muut kaupat"}</h3>
         <button class="btn ghost" onClick={() => setFound(null)}>Sulje</button>
       </div>
 

@@ -248,8 +248,12 @@ Deno.serve(async (req) => {
       if (!item) continue;
       const ctx = ctxFor(link.household_id);
       try {
-        if (await processLink(admin, robots, link, shop, item, rulesFor(item), isMutedFor(item.household_id), ctx)) {
-          touchedItems.add(item.id);
+        const r = await processLink(admin, robots, link, shop, item, rulesFor(item), isMutedFor(item.household_id), ctx);
+        if (r === true) touchedItems.add(item.id);
+        if (r === "blocked") {
+          // The shop blocks us: leave its other links to a later tick instead of insisting.
+          released.push(...queue.slice(i + 1).map((l) => l.id));
+          return;
         }
       } catch (e) {
         ctx.fail++;
@@ -493,7 +497,10 @@ async function backfillHistory(admin: SupabaseClient, link: LinkRow, points: Pri
   if (error) throw error;
 }
 
-/** Fetches one link, stores observations and collects shop-level reasons. Returns true on success. */
+/**
+ * Fetches one link, stores observations and collects shop-level reasons. Returns true on success and
+ * "blocked" when the shop's bot protection answered.
+ */
 async function processLink(
   admin: SupabaseClient,
   robots: RobotsCache,
@@ -503,7 +510,7 @@ async function processLink(
   rules: Rules,
   isMuted: IsMuted,
   ctx: Ctx,
-): Promise<boolean> {
+): Promise<boolean | "blocked"> {
   const now = new Date().toISOString();
   const nowMs = Date.parse(now);
   const fail = async (status: "error" | "blocked" | "no_data", error: string) => {
@@ -519,8 +526,9 @@ async function processLink(
       claimed_until: null,
     }).eq("id", link.id);
     await admin.from("shops").update({ last_error: `${status}: ${error}`.slice(0, 500) }).eq("id", shop.id);
-    // Broken for over a day: one alert per link per week (not for purchased items).
-    if (!item.purchased_at && nowMs - Date.parse(failingSince) > DAY) {
+    // Broken for over a day: one alert per link per week (not for purchased items). A block is the shop's
+    // doing and hits all its links at once: Settings shows it instead of an alert per link.
+    if (status !== "blocked" && !item.purchased_at && nowMs - Date.parse(failingSince) > DAY) {
       const prev = await lastReason(admin, item.id, "link_broken", link.id);
       if (!prev || nowMs - prev.ts >= 7 * DAY) {
         const reason: Reason = {
@@ -530,7 +538,7 @@ async function processLink(
         await insertEvent(admin, ctx, item, buildEvent([reason], { pushMinPct: rules.push_min_pct })!, [reason], link.user_id);
       }
     }
-    return false;
+    return status === "blocked" ? "blocked" as const : false;
   };
 
   const read = await readOffers(link, robots);

@@ -32,6 +32,42 @@ export function clearPendingDirectLink() {
   } catch { /* ignore */ }
 }
 
+// ---------- hintaopas.fi link hunt ----------
+// hintaopas has no search URL we may link to (closed to bots), so: the item name goes to the clipboard,
+// hintaopas.fi opens, and back in the app the add view reads the copied product link.
+const HUNT_KEY = "pending-hintaopas";
+
+export async function startHintaopasHunt(itemId: string, name: string) {
+  try {
+    localStorage.setItem(HUNT_KEY, JSON.stringify({ item: itemId, at: Date.now() }));
+  } catch { /* private mode */ }
+  try {
+    await navigator.clipboard.writeText(name);
+  } catch { /* not allowed: the user types the name */ }
+}
+
+export function hintaopasHuntFor(itemId: string | null): boolean {
+  try {
+    const p = JSON.parse(localStorage.getItem(HUNT_KEY) ?? "null") as { item: string; at: number } | null;
+    return Boolean(p && itemId && p.item === itemId && Date.now() - p.at < TTL_MS);
+  } catch {
+    return false;
+  }
+}
+
+export function clearHintaopasHunt() {
+  try {
+    localStorage.removeItem(HUNT_KEY);
+  } catch { /* ignore */ }
+}
+
+// ---------- hinta.fi suggestion after adding ----------
+// A new item added from a shop page with an EAN: its page looks the product up on hinta.fi once and
+// offers the other shops in one tap.
+const suggestHintaFi = new Set<string>();
+export const markSuggestHintaFi = (itemId: string) => suggestHintaFi.add(itemId);
+export const takeSuggestHintaFi = (itemId: string) => suggestHintaFi.delete(itemId);
+
 // ---------- De-duplication ----------
 
 type AggLink = { id: string; sellers: string[] | null; shops: { strategy: string } | null };

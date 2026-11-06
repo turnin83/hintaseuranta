@@ -15,6 +15,8 @@ export function detectBotMarkers(status: number, headers: Headers, html: string)
     [/px-captcha|_pxCaptcha/i, "PerimeterX"],
     [/geo\.captcha-delivery\.com/i, "DataDome captcha"],
     [/<title>Access Denied<\/title>[\s\S]*Reference #/i, "Akamai Access Denied"],
+    // hinta.fi answers a blocked client with HTTP 404 and an "unban" form
+    [/hvFormUnban|null_unban\.php|Pääsy rajoitettu/i, "hinta.fi access restricted"],
   ];
   for (const [re, label] of bodyChecks) if (re.test(head)) out.push(label);
   return out;
