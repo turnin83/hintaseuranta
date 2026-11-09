@@ -37,7 +37,7 @@ export function assessDeal(i: WishSummary, obsCount: number): DealAssessment {
   };
   if (p == null || i.best_availability === "out_of_stock" || i.purchased_at) return none;
 
-  const med = i.median_30d_cents;
+  const med = i.usual_cents;
   const discountPct = med ? Math.round(((med - p) / med) * 100) : null;
   const tier = discountPct == null ? null : TIERS.find((t) => discountPct >= t.min)?.tier ?? null;
   const targetHit = i.target_price_cents != null && p <= i.target_price_cents;

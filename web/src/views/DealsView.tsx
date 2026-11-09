@@ -63,7 +63,7 @@ export function DealsView() {
       <CampaignBadge />
       <div class="stack-sm">
         <p class="muted">
-          Paras saatavilla oleva hinta verrattuna tuotteen tavalliseen hintaan (30 päivän mediaani).
+          Paras saatavilla oleva hinta verrattuna tuotteen tavalliseen hintaan.
           {buyCount > 0 && <> <strong>{buyCount} {buyCount === 1 ? "ostosuositus" : "ostosuositusta"}.</strong></>}
         </p>
         <div class="seg" role="group" aria-label="Suodata">
@@ -113,8 +113,8 @@ function DealCard({ deal: { item: i, a } }: { deal: Deal }) {
         </div>
         <div class="price-row">
           <span class="price num">{eur(i.best_price_cents!)}</span>
-          {i.median_30d_cents != null && a.discountPct != null && a.discountPct >= 5 && (
-            <s class="was num">{eur(i.median_30d_cents)}</s>
+          {i.usual_cents != null && a.discountPct != null && a.discountPct >= 5 && (
+            <s class="was num">{eur(i.usual_cents)}</s>
           )}
           <span class="muted">{i.best_seller}</span>
         </div>

@@ -155,6 +155,18 @@ const hintaopas: Adapter = (html, _url, base) => {
   };
 };
 
+// ---------- csx4 web shop platform (Ykköspalvelu, Pemic) ----------
+// JSON-LD can carry the price without VAT (Ykköspalvelu does). The product form always has the price the
+// customer pays. Without it nothing is recorded, rather than a price that may be 20 % too low.
+
+export const CSX4_PRICE_FIELD = 'id="csx4_connections_product_price"';
+
+export const csx4: Adapter = (html, _url, base) => {
+  const cents = toCents(parsePrice(html.match(/id="csx4_connections_product_price"\s+value="([^"]*)"/)?.[1]));
+  if (!base || base.offers.length !== 1 || cents == null) return null;
+  return { ...base, source: "adapter:csx4", offers: [{ ...base.offers[0], priceCents: cents }] };
+};
+
 // ---------- hinta.fi ----------
 // Seller offers come from JSON-LD; the offer table adds delivery fee and availability per seller:
 // <tr class="hv-oft-tr" data-price=".." data-delivery-fee=".."> ... <span class="hv-visual-hide">Seller</span>

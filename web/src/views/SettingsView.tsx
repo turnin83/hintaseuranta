@@ -546,7 +546,7 @@ function PurchasesSection() {
         <strong class="saved-total num">Säästit {eur(total)}</strong>
         <span class="muted"> · {items.length} {items.length === 1 ? "ostos" : "ostosta"}, yhteensä {eur(spent)}</span>
       </p>
-      <p class="meta">Säästö verrattuna tuotteen tavalliseen hintaan (30 päivän mediaani) ostohetkellä.</p>
+      <p class="meta">Säästö verrattuna tuotteen tavalliseen hintaan ostohetkellä.</p>
       {byCampaign.length > 0 && (
         <div class="stack-sm">
           {byCampaign.map(({ c, count, saved: s }) => (

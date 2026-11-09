@@ -4,7 +4,6 @@ import {
   buildEvent,
   claimCheck,
   DEFAULT_RULES,
-  dailyMinMedian,
   describeClaim,
   diffRules,
   evaluateAfterPurchase,
@@ -13,7 +12,6 @@ import {
   type ItemAlertState,
   type ItemState,
   meaningfulDrop,
-  median,
   mergeRules,
   type Obs,
   ownLow30d,
@@ -57,20 +55,6 @@ function seriesRules(history: Obs[], current: Partial<Obs> & { priceCents: numbe
   }).map((c) => c.rule);
 }
 
-test("median and daily-min median", () => {
-  assert.equal(median([3, 1, 2]), 2);
-  assert.equal(median([1, 2, 3, 4]), 3);
-  assert.equal(median([]), null);
-  const obs: Obs[] = [
-    { ts: T0, priceCents: 1000, availability: "in_stock", lowest30dCents: null },
-    { ts: T0 + 1000, priceCents: 900, availability: "in_stock", lowest30dCents: null },
-    { ts: T0 + DAY, priceCents: 1100, availability: "in_stock", lowest30dCents: null },
-    { ts: T0 + DAY + 1000, priceCents: 500, availability: "out_of_stock", lowest30dCents: null },
-    { ts: T0 + 2 * DAY, priceCents: 950, availability: "in_stock", lowest30dCents: null },
-  ];
-  assert.deepEqual(dailyMinMedian(obs), { median: 950, days: 3 });
-});
-
 test("meaningful drop: at least 1 € and 1 %", () => {
   assert.equal(meaningfulDrop(9864, 9862), false); // Kingston: 2 cents
   assert.equal(meaningfulDrop(1549, 1535), false); // 14 cents
@@ -99,7 +83,7 @@ test("item: first evaluation only records the state (no burst after deploy)", ()
   assert.deepEqual(r.next.below_target, { on: true, last: 5057 });
 });
 
-test("item: below 30-day median is state based too", () => {
+test("item: below the usual price is state based too", () => {
   const s = { bestCents: 900, medianCents: 1000, medianDays: 3 };
   const first = evaluateItemRules(item(s), DEFAULT_RULES, SEEN);
   assert.deepEqual(first.candidates.map((c) => c.rule), ["below_median"]);

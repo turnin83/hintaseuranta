@@ -120,13 +120,13 @@
     "domain": "kauppa.ykkospalvelu.fi",
     "url": "https://kauppa.ykkospalvelu.fi/p22298-statt-avalanche-s1000-akkukayttoinen-lumentyonnin-fi.html",
     "fixture": "shop-kauppa-ykkospalvelu-fi.html.gz",
-    "captured": "2026-11-04",
+    "captured": "2026-11-09",
     "expect": {
       "kind": "shop",
-      "source": "jsonld",
+      "source": "adapter:csx4",
       "offers": 1,
       "seller": null,
-      "priceCents": 10358
+      "priceCents": 9899
     }
   },
   {
@@ -244,6 +244,19 @@
       "offers": 1,
       "seller": null,
       "priceCents": 11599
+    }
+  },
+  {
+    "domain": "pemic.fi",
+    "url": "https://www.pemic.fi/p24877-karcher-rcw-2-extra-ikkunanpesurobotti-1269-2130-en.html",
+    "fixture": "shop-pemic-fi.html.gz",
+    "captured": "2026-11-09",
+    "expect": {
+      "kind": "shop",
+      "source": "adapter:csx4",
+      "offers": 1,
+      "seller": null,
+      "priceCents": 17900
     }
   }
 ]

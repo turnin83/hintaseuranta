@@ -17,7 +17,7 @@ import { AlertEntry } from "../components/AlertEntry.tsx";
 import type { Shop } from "../lib/types.ts";
 import { AFTER_PURCHASE_DAYS, claimCheck, describeClaim, diffRules, mergeRules, type Rules } from "@shared/rules.ts";
 import { RulesForm, rulesSummary } from "../components/RulesForm.tsx";
-import { fiDay, type LowPoint, lowestBetween, PRICE_ROW_COLS, type PriceRow, usualPriceBefore } from "../lib/history.ts";
+import { fiDay, type LowPoint, lowestBetween, PRICE_ROW_COLS, type PriceRow } from "../lib/history.ts";
 
 const DAY = 86_400_000;
 const HINTAOPAS = "hintaopas.fi";
@@ -241,8 +241,8 @@ export function ItemView({ id }: { id: string }) {
             )}
           </div>
           <div>
-            <dt>30 pv mediaani</dt>
-            <dd class="num">{item.median_30d_cents != null ? eur(item.median_30d_cents) : "–"}</dd>
+            <dt>Tavallinen hinta</dt>
+            <dd class="num">{item.usual_cents != null ? eur(item.usual_cents) : "–"}</dd>
           </div>
           <div>
             <dt>Tavoite</dt>
@@ -273,7 +273,7 @@ export function ItemView({ id }: { id: string }) {
       {suggestHintaFi && <FindOffers auto itemId={id} itemEans={eans as string[]} onAdded={reload} />}
       {links.filter(isMovedHintaFi).map((l) => <HintaFiRepair key={l.id} itemId={id} link={l} onDone={reload} />)}
 
-      <PurchasePanel item={item} links={links} onSaved={reload} />
+      <PurchasePanel item={item} onSaved={reload} />
 
       <section class="section" aria-labelledby="h-history">
         <div class="section-head">
@@ -503,7 +503,7 @@ function EditPanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }
   // Target price suggestions from history (whole euros): the lowest seen, and 15 % under the usual price.
   const suggestions = [
     item.min_all_cents != null ? { label: "Alin hinta", cents: Math.floor(item.min_all_cents / 100) * 100 } : null,
-    item.median_30d_cents != null ? { label: "Mediaani −15 %", cents: Math.floor((item.median_30d_cents * 0.85) / 100) * 100 } : null,
+    item.usual_cents != null ? { label: "Tavallinen −15 %", cents: Math.floor((item.usual_cents * 0.85) / 100) * 100 } : null,
   ].filter((x): x is { label: string; cents: number } => x != null && x.cents > 0)
     .filter((x, i, a) => a.findIndex((y) => y.cents === x.cents) === i);
   const [busy, setBusy] = useState(false);
@@ -684,40 +684,32 @@ function HintaFiRepair({ itemId, link, onDone }: { itemId: string; link: Product
   );
 }
 
-/** Observations of the links around a moment: [untilMs - days, untilMs). */
-async function loadRows(links: ProductLink[], untilMs: number, days: number): Promise<PriceRow[]> {
-  if (links.length === 0) return [];
-  const { data } = await supabase.from("price_observations").select(PRICE_ROW_COLS)
-    .in("product_link_id", links.map((l) => l.id))
-    .gte("ts", new Date(untilMs - days * DAY).toISOString()).lt("ts", new Date(untilMs).toISOString())
-    .limit(10000);
-  return (data ?? []) as PriceRow[];
+type PriceLevel = { usual_cents: number | null; low_cents: number | null; low_ts: string | null; low_shop: string | null };
+
+/** The item's usual price and its lowest price of the 90 days before a moment. */
+async function priceLevelBefore(itemId: string, before: string): Promise<PriceLevel | null> {
+  const { data } = await supabase.rpc("item_price_stats", { p_item: itemId, p_before: before }).maybeSingle();
+  return data as PriceLevel | null;
 }
 
-function PurchasePanel({ item, links, onSaved }: { item: WishSummary; links: ProductLink[]; onSaved: () => void }) {
+function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [price, setPrice] = useState(centsToInput(item.best_price_cents));
   const [seller, setSeller] = useState(item.best_seller ?? "");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
-  const [rows, setRows] = useState<PriceRow[]>([]);
+  const [level, setLevel] = useState<PriceLevel | null>(null);
   const [editRef, setEditRef] = useState<string | null>(null);
 
-  // Prices in the 90 days before the purchase: the usual price and any lower price before it.
-  const boughtMs = item.purchased_at ? Date.parse(item.purchased_at) : null;
   useEffect(() => {
-    if (boughtMs != null) loadRows(links, boughtMs, 90).then(setRows);
-  }, [boughtMs, links]);
+    if (item.purchased_at) priceLevelBefore(item.id, item.purchased_at).then(setLevel);
+  }, [item.id, item.purchased_at]);
 
-  if (item.purchased_at && boughtMs != null) {
+  if (item.purchased_at) {
     const saved = item.purchased_ref_cents != null && item.purchased_price_cents != null
       ? item.purchased_ref_cents - item.purchased_price_cents
       : null;
-    const nameOf = (r: PriceRow) => {
-      const l = links.find((x) => x.id === r.product_link_id);
-      return r.seller || l?.shops?.name || l?.shops?.domain || null;
-    };
-    const lowBefore = lowestBetween(rows, boughtMs - 90 * DAY, boughtMs, nameOf);
+    const lowBefore = level?.low_cents != null ? { cents: level.low_cents, ts: level.low_ts!, where: level.low_shop } : null;
     const wasCheaper = lowBefore != null && item.purchased_price_cents != null &&
       item.purchased_price_cents - lowBefore.cents >= 100 && lowBefore.cents < item.purchased_price_cents * 0.99;
     const saveRef = async () => {
@@ -766,10 +758,10 @@ function PurchasePanel({ item, links, onSaved }: { item: WishSummary; links: Pro
             <label class="field"><span>Tavallinen hinta ostohetkellä (€)</span>
               <input inputMode="decimal" value={editRef} onInput={(e) => setEditRef((e.target as HTMLInputElement).value)} />
             </label>
-            <p class="meta">Laske historiasta = alimpien päivähintojen mediaani 30 päivältä ennen ostoa (mukana hintaoppaan hintahistoria).</p>
+            <p class="meta">Laske historiasta = tavallinen hinta ennen ostoa, mukana hintaoppaan hintahistoria.</p>
             <div class="actions">
               <button class="btn small" onClick={() => {
-                const c = usualPriceBefore(rows, boughtMs);
+                const c = level?.usual_cents;
                 if (c == null) toast("Ostoa edeltävältä ajalta ei ole hintoja");
                 else setEditRef(centsToInput(c));
               }}>Laske historiasta</button>
@@ -805,7 +797,7 @@ function PurchasePanel({ item, links, onSaved }: { item: WishSummary; links: Pro
     setBusy(true);
     // The usual price before the purchase day (not just today's), incl. price history from before tracking.
     const at = new Date(`${date}T12:00:00`);
-    const ref = usualPriceBefore(await loadRows(links, at.getTime(), 30), at.getTime()) ?? item.median_30d_cents;
+    const ref = (await priceLevelBefore(item.id, at.toISOString()))?.usual_cents ?? item.usual_cents;
     const { error } = await supabase.from("wish_items").update({
       purchased_at: at.toISOString(),
       purchased_price_cents: cents,
@@ -835,7 +827,7 @@ function PurchasePanel({ item, links, onSaved }: { item: WishSummary; links: Pro
       <label class="field"><span>Kauppa</span>
         <input value={seller} onInput={(e) => setSeller((e.target as HTMLInputElement).value)} />
       </label>
-      <p class="meta">Normaalit hälytykset loppuvat. Hintaa seurataan vielä {AFTER_PURCHASE_DAYS} pv, ja jos se laskee alle ostohinnan, saat ilmoituksen. Säästö lasketaan tuotteen tavalliseen hintaan (30 pv mediaani){item.median_30d_cents ? `: ${eur(item.median_30d_cents)}` : ""}.</p>
+      <p class="meta">Normaalit hälytykset loppuvat. Hintaa seurataan vielä {AFTER_PURCHASE_DAYS} pv, ja jos se laskee alle ostohinnan, saat ilmoituksen. Säästö lasketaan tuotteen tavalliseen hintaan{item.usual_cents ? `: ${eur(item.usual_cents)}` : ""}.</p>
       <div class="actions">
         <button class="btn primary" disabled={busy}>Tallenna</button>
         <button type="button" class="btn ghost" onClick={() => setOpen(false)}>Peru</button>

@@ -7,7 +7,7 @@ const item = (p: Partial<WishSummary>): WishSummary => ({
   id: "i", name: "x", tags: [], target_price_cents: null, priority: 2, active: true, notes: null, rules: {},
   created_at: "", best_seller: "Shop", best_price_cents: 10000, best_url: null, best_availability: "in_stock",
   best_ts: "", best_shipping_cents: null, best_claim_cents: null, best_own_low_cents: null,
-  purchased_at: null, purchased_price_cents: null, purchased_seller: null, purchased_ref_cents: null, min_all_cents: 10000, median_30d_cents: 10000, link_count: 1, failing_links: 0, last_fetched_at: null,
+  purchased_at: null, purchased_price_cents: null, purchased_seller: null, purchased_ref_cents: null, min_all_cents: 10000, usual_cents: 10000, link_count: 1, failing_links: 0, last_fetched_at: null,
   unread_alerts: 0, ...p,
 });
 
@@ -61,13 +61,13 @@ test("out of stock or no price is never a deal", () => {
 
 test("raised then discounted: no buy recommendation, warning shown", () => {
   // usual (median) 299 €, now 179 € (40 %), but we have seen 149 € before
-  const a = assessDeal(item({ best_price_cents: 17900, median_30d_cents: 29900, min_all_cents: 14900 }), 20);
+  const a = assessDeal(item({ best_price_cents: 17900, usual_cents: 29900, min_all_cents: 14900 }), 20);
   assert.equal(a.tier, "excellent");
   assert.equal(a.recommendation, "consider");
   assert.ok(a.warnings[0].replaceAll(String.fromCharCode(0xa0), " ").includes("Hinta on ollut alempi: 149 €"));
   assert.match(a.reasons[0], /alle viime aikojen hinnan$/);
   // own target still wins
-  const t = assessDeal(item({ best_price_cents: 17900, median_30d_cents: 29900, min_all_cents: 14900, target_price_cents: 18000 }), 20);
+  const t = assessDeal(item({ best_price_cents: 17900, usual_cents: 29900, min_all_cents: 14900, target_price_cents: 18000 }), 20);
   assert.equal(t.recommendation, "buy");
 });
 

@@ -23,7 +23,7 @@ export type WishSummary = {
   best_availability: Availability | null;
   best_ts: string | null;
   min_all_cents: number | null;
-  median_30d_cents: number | null;
+  usual_cents: number | null;
   link_count: number;
   failing_links: number;
   last_fetched_at: string | null;

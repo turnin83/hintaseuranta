@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { lowestBetween, type PriceRow, usualPriceBefore } from "../web/src/lib/history.ts";
+import { lowestBetween, type PriceRow } from "../web/src/lib/history.ts";
 
 const row = (day: string, cents: number, seller = "#history", shop: string | null = "Proshop"): PriceRow => ({
   ts: `${day}T12:00:00.000Z`,
@@ -19,11 +19,6 @@ const rows: PriceRow[] = [
   row("2026-11-02", 12900, "#history", "Gigantti"),
 ];
 const bought = Date.parse("2026-11-03T10:00:00Z");
-
-test("usual price before a purchase uses the price history from before tracking", () => {
-  assert.equal(usualPriceBefore(rows, bought), 17200);
-  assert.equal(usualPriceBefore([], bought), null);
-});
 
 test("lowest price before a purchase tells where and when", () => {
   const low = lowestBetween(rows, bought - 90 * 86_400_000, bought, () => null)!;

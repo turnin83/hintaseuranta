@@ -222,3 +222,17 @@ test("botcheck: hinta.fi block page (HTTP 404 with an unban form) is a block, no
   assert.ok(isBlocked(404, markers));
   assert.equal(isBlocked(404, detectBotMarkers(404, new Headers(), "<html><title>Not found</title></html>")), false);
 });
+
+test("csx4 shops: the price the customer pays, not JSON-LD's price without VAT", () => {
+  const url = "https://kauppa.ykkospalvelu.fi/p22298-statt-avalanche-s1000-akkukayttoinen-lumentyonnin-fi.html";
+  const normal = extractPage(fixture("ykkospalvelu-normal-price"), url)!;
+  assert.equal(normal.source, "adapter:csx4");
+  assert.equal(normal.offers[0].priceCents, 12999); // JSON-LD says 103.58
+  const sale = extractPage(fixture("shop-kauppa-ykkospalvelu-fi"), url)!;
+  assert.equal(sale.offers[0].priceCents, 9899); // JSON-LD says 78.88
+  const pemic = extractPage(fixture("shop-pemic-fi"), "https://www.pemic.fi/p24877-x-en.html")!;
+  assert.equal(pemic.offers[0].priceCents, 17900); // found by the page, not the domain
+  // The field is gone: no price at all rather than one that may be without VAT.
+  const broken = fixture("shop-kauppa-ykkospalvelu-fi").replace(/(csx4_connections_product_price" value=")[^"]*/, "$1");
+  assert.equal(extractPage(broken, url), null);
+});

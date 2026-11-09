@@ -1,12 +1,12 @@
 // Alert rules editor, shared by Settings (household defaults) and the item view (item overrides).
 import { RULE_LABELS, type Rules } from "@shared/rules.ts";
 
-/** Short list of enabled rules, e.g. "Alle tavoitehinnan · Alin koskaan · Alle mediaanin −10 %". */
+/** Short list of enabled rules, e.g. "Alle tavoitehinnan · Alin koskaan · −10 % tavallisesta". */
 export function rulesSummary(r: Rules): string {
   const on: string[] = [];
   if (r.below_target) on.push("tavoitehinta");
   if (r.all_time_low.enabled) on.push("alin koskaan");
-  if (r.below_median.enabled) on.push(`−${r.below_median.pct} % mediaanista`);
+  if (r.below_median.enabled) on.push(`−${r.below_median.pct} % tavallisesta`);
   if (r.drop.enabled) on.push(`pudotus ${r.drop.pct} %`);
   if (r.back_in_stock) on.push("varastoon");
   if (!on.length) return "kaikki hälytykset pois";
@@ -42,7 +42,7 @@ export function RulesForm(props: { value: Rules; onChange: (r: Rules) => void; t
           {RULE_LABELS.below_median}
         </label>
         {r.below_median.enabled && (
-          <label class="field indent"><span>Vähintään % alle mediaanin</span>
+          <label class="field indent"><span>Vähintään % alle tavallisen hinnan</span>
             <input type="number" min={1} max={90} value={r.below_median.pct} onInput={(e) => set({ below_median: { ...r.below_median, pct: num(e) } })} />
           </label>
         )}

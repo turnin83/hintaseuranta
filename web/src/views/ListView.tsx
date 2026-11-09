@@ -231,7 +231,7 @@ function Items({ items, density, trend }: { items: WishSummary[]; density: Densi
 
 /** Compact two-level row: name on top, price · change · shop underneath. */
 function CompactRow({ item: i }: { item: WishSummary }) {
-  const delta = i.best_price_cents != null && i.median_30d_cents ? pctDelta(i.best_price_cents, i.median_30d_cents) : null;
+  const delta = i.best_price_cents != null && i.usual_cents ? pctDelta(i.best_price_cents, i.usual_cents) : null;
   const targetHit = i.best_price_cents != null && i.target_price_cents != null && i.best_price_cents <= i.target_price_cents;
   const out = i.best_availability === "out_of_stock";
   return (
@@ -285,7 +285,7 @@ function Groups({ items, order, density, trend }: { items: WishSummary[]; order:
 }
 
 function ItemCard({ item: i, trend }: { item: WishSummary; trend: number[] }) {
-  const delta = i.best_price_cents != null && i.median_30d_cents ? pctDelta(i.best_price_cents, i.median_30d_cents) : null;
+  const delta = i.best_price_cents != null && i.usual_cents ? pctDelta(i.best_price_cents, i.usual_cents) : null;
   const targetHit = i.best_price_cents != null && i.target_price_cents != null && i.best_price_cents <= i.target_price_cents;
 
   return (
@@ -310,7 +310,7 @@ function ItemCard({ item: i, trend }: { item: WishSummary; trend: number[] }) {
         {delta != null && (
           <span class={`delta num ${delta < 0 ? "down" : delta > 0 ? "up" : ""}`}>
             {delta < 0 ? <IconArrowDown width={14} height={14} style="vertical-align:-2px" /> : delta > 0 ? <IconArrowUp width={14} height={14} style="vertical-align:-2px" /> : null}
-            {" "}{signedPct(delta)} vs 30 pv mediaani
+            {" "}{signedPct(delta)} vs tavallinen hinta
           </span>
         )}
         {i.target_price_cents != null && (

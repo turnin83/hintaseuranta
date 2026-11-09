@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { extractPage } from "../supabase/functions/_shared/extract.ts";
+import { showsPriceWithVat } from "../scripts/vat-check.ts";
 
 type Entry = {
   domain: string;
@@ -25,5 +26,6 @@ for (const e of entries) {
     assert.equal(p.offers[0].seller, e.expect.seller);
     assert.equal(p.offers[0].priceCents, e.expect.priceCents);
     assert.equal(p.offers[0].currency ?? "EUR", "EUR");
+    if (e.expect.kind === "shop") assert.ok(!showsPriceWithVat(html, e.expect.priceCents), "price looks like one without VAT");
   });
 }

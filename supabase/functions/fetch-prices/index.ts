@@ -24,7 +24,6 @@ import {
   CAMPAIGN_NIGHT_RULES,
   claimCheck,
   confirmDrops,
-  dailyMinMedian,
   describeClaim,
   eur,
   evaluateAfterPurchase,
@@ -141,12 +140,16 @@ function alertable(s: SeriesRow, isMuted: IsMuted): boolean {
   return !(s.shop_strategy === "aggregator" && s.seller === "") && !isMuted(s.seller_name);
 }
 
-type ObsRow = {
-  ts: string;
-  price_cents: number;
-  availability: string;
-  lowest_30d_cents: number | null;
-  history_shop?: string | null;
+type ObsRow = { ts: string; price_cents: number; availability: string; lowest_30d_cents: number | null };
+
+/** SQL: item_price_stats. The item's usual price and lowest price of the last 90 days. */
+type ItemStats = {
+  usual_cents: number | null;
+  usual_days: number;
+  low_cents: number | null;
+  low_ts: string | null;
+  low_shop: string | null;
+  has_history: boolean;
 };
 
 const toObs = (r: ObsRow): Obs => ({
@@ -662,44 +665,34 @@ async function evaluateItem(
     return;
   }
 
-  // History of the item's links. A comparison page's anonymous low (aggregator link, seller '') is left
-  // out: it is not a shop you can buy from and it would duplicate the shops' own prices.
   const { data: linkData } = await admin.from("product_links").select("id, shops(strategy)").eq("wish_item_id", item.id);
   const linkList = (linkData ?? []) as unknown as { id: string; shops: { strategy: string } | null }[];
   const linkIds = linkList.map((l) => l.id);
   const directIds = linkList.filter((l) => l.shops?.strategy !== "aggregator").map((l) => l.id);
-  const aggIds = new Set(linkList.filter((l) => l.shops?.strategy === "aggregator").map((l) => l.id));
   const before = started.toISOString();
-  const since60 = new Date(started.getTime() - 60 * DAY).toISOString();
-  const since30ms = started.getTime() - 30 * DAY;
 
-  const [sellerMin, directMin, countQ, recentQ] = await Promise.all([
+  const [sellerMin, directMin, countQ, statsQ] = await Promise.all([
     admin.from("price_observations").select("price_cents").in("product_link_id", linkIds).neq("seller", "").lt("ts", before)
       .order("price_cents").limit(1).maybeSingle(),
     admin.from("price_observations").select("price_cents").in("product_link_id", directIds).lt("ts", before)
       .order("price_cents").limit(1).maybeSingle(),
     admin.from("price_observations").select("id", { count: "exact", head: true }).in("product_link_id", linkIds).lt("ts", before),
-    admin.from("price_observations").select("ts, price_cents, availability, lowest_30d_cents, seller, product_link_id, history_shop")
-      .in("product_link_id", linkIds).gte("ts", since60).lt("ts", before).order("ts", { ascending: false }).limit(10000),
+    admin.rpc("item_price_stats", { p_item: item.id, p_before: before }).single(),
   ]);
+  if (statsQ.error) throw statsQ.error;
+  const stats = statsQ.data as ItemStats;
   const prevMin = [sellerMin.data?.price_cents, directMin.data?.price_cents].filter((v): v is number => v != null);
 
-  const recent = ((recentQ.data ?? []) as (ObsRow & { seller: string; product_link_id: string })[])
-    .filter((r) => !(r.seller === "" && aggIds.has(r.product_link_id)));
-  const obs30 = recent.filter((r) => Date.parse(r.ts) >= since30ms).map(toObs);
-  const med = dailyMinMedian(obs30);
   // A new item normally starts silently (no baseline yet). With the price history from before tracking
   // there is one, so a sale that was already on when the item was added is alerted at once.
-  const hasHistory = recent.some((r) => r.seller === HISTORY_SELLER);
-
   const { candidates, next } = evaluateItemRules({
     bestCents: best.price_cents,
     prevMinCents: prevMin.length ? Math.min(...prevMin) : null,
     prevObsCount: countQ.count ?? 0,
-    medianCents: med.median,
-    medianDays: med.days,
+    medianCents: stats.usual_cents,
+    medianDays: stats.usual_days,
     targetCents: item.target_price_cents,
-  }, rules, item.alert_state ?? (hasHistory ? {} : null));
+  }, rules, item.alert_state ?? (stats.has_history ? {} : null));
   if (JSON.stringify(next) !== JSON.stringify(item.alert_state)) {
     await admin.from("wish_items").update({ alert_state: next }).eq("id", item.id);
   }
@@ -711,15 +704,11 @@ async function evaluateItem(
   const warnings: string[] = [];
   const claim = claimCheck(best.price_cents, best.lowest_30d_cents, best.own_low_30d_cents);
   if (claim && claim.kind !== "ok") warnings.push(describeClaim(claim));
-  const low60 = recent.filter((r) => r.availability !== "out_of_stock").reduce<ObsRow | null>(
-    (a, b) => (!a || b.price_cents < a.price_cents ? b : a),
-    null,
-  );
-  const inflated = low60 != null && meaningfulDrop(best.price_cents, low60.price_cents) &&
-    best.price_cents > low60.price_cents * 1.05;
+  const inflated = stats.low_cents != null && meaningfulDrop(best.price_cents, stats.low_cents) &&
+    best.price_cents > stats.low_cents * 1.05;
   if (inflated) {
-    const where = low60!.history_shop ? ` (${low60!.history_shop})` : "";
-    warnings.push(`Hinta oli alempi ${fiDay(low60!.ts)}: ${eur(low60!.price_cents)}${where}.`);
+    const where = stats.low_shop ? ` (${stats.low_shop})` : "";
+    warnings.push(`Hinta oli alempi ${fiDay(stats.low_ts!)}: ${eur(stats.low_cents!)}${where}.`);
   }
 
   const draft = buildEvent(reasons, { pushMinPct: rules.push_min_pct, warnings, inflated });

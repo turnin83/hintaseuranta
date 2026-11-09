@@ -12,6 +12,7 @@ import { gzipSync } from "node:zlib";
 import { createRobotsCache, fetchPage } from "../supabase/functions/_shared/fetcher.ts";
 import { extractPage } from "../supabase/functions/_shared/extract.ts";
 import type { PageData } from "../supabase/functions/_shared/types.ts";
+import { showsPriceWithVat } from "./vat-check.ts";
 
 type Expect = { kind: PageData["kind"]; source: string; offers: number; seller: string | null; priceCents: number };
 type Entry = { domain: string; url: string; fixture: string; captured?: string; expect?: Expect };
@@ -49,6 +50,10 @@ for (const e of entries) {
     note = `${changed ? "CHANGED" : "ok     "} ${got.source} · ${got.seller ?? "shop"} ${eur(got.priceCents)}` +
       (was ? ` (saved ${eur(was.priceCents)}${pct ? `, ${pct > 0 ? "+" : ""}${pct} %` : ""})` : "") +
       (Math.abs(pct) >= 30 ? "  <- check the page by hand" : "");
+  }
+  if (got?.kind === "shop" && showsPriceWithVat(f.html, got.priceCents)) {
+    problems++;
+    note += "  <- the page also shows this price + 25.5 %: is it without VAT?";
   }
   console.log(`${e.domain.padEnd(24)} ${note}`);
   await new Promise((r) => setTimeout(r, 1500));

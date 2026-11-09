@@ -1,7 +1,6 @@
-// Price level around a moment (a purchase), from the item's observations including the price history
-// from before tracking (hintaopas.fi, HISTORY_SELLER). Pure functions; the caller loads the rows.
-import { dailyMinMedian, HISTORY_SELLER, type Obs } from "../../../supabase/functions/_shared/rules.ts";
-import type { Availability } from "../../../supabase/functions/_shared/types.ts";
+// Where and when a price was lowest, from the item's observations including the price history from
+// before tracking (hintaopas.fi, HISTORY_SELLER). Pure functions; the caller loads the rows.
+import { HISTORY_SELLER } from "../../../supabase/functions/_shared/rules.ts";
 
 export type PriceRow = {
   ts: string;
@@ -13,24 +12,12 @@ export type PriceRow = {
 };
 
 export const PRICE_ROW_COLS = "ts, price_cents, availability, seller, history_shop, product_link_id";
-const DAY = 86_400_000;
 
 const inStockBetween = (rows: PriceRow[], fromMs: number, toMs: number) =>
   rows.filter((r) => {
     const t = Date.parse(r.ts);
     return t >= fromMs && t < toMs && r.availability !== "out_of_stock";
   });
-
-/** The usual price before `untilMs`: median of the daily lowest in-stock prices over the 30 days before. */
-export function usualPriceBefore(rows: PriceRow[], untilMs: number): number | null {
-  const obs: Obs[] = inStockBetween(rows, untilMs - 30 * DAY, untilMs).map((r) => ({
-    ts: Date.parse(r.ts),
-    priceCents: r.price_cents,
-    availability: r.availability as Availability,
-    lowest30dCents: null,
-  }));
-  return dailyMinMedian(obs).median;
-}
 
 export type LowPoint = { cents: number; ts: string; where: string | null; fromHistory: boolean };
 

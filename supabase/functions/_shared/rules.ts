@@ -184,24 +184,6 @@ export function pctBelow(priceCents: number, refCents: number): number {
   return Math.round((1 - priceCents / refCents) * 100);
 }
 
-export function median(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const s = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
-}
-
-/** Median of per-day minimum prices (in-stock observations), as used by the UI and item rules. */
-export function dailyMinMedian(obs: Obs[]): { median: number | null; days: number } {
-  const byDay = new Map<string, number>();
-  for (const o of obs) {
-    if (UNAVAILABLE.includes(o.availability)) continue;
-    const d = new Date(o.ts).toISOString().slice(0, 10);
-    byDay.set(d, Math.min(byDay.get(d) ?? Infinity, o.priceCents));
-  }
-  return { median: median([...byDay.values()]), days: byDay.size };
-}
-
 // ---------------------------------------------------------------------------
 // Item level
 // ---------------------------------------------------------------------------
@@ -213,7 +195,7 @@ export type ItemState = {
   prevMinCents: number | null;
   /** Number of observations before this run (any shop). */
   prevObsCount: number;
-  /** 30-day median of daily minimums before this run, and how many days it covers. */
+  /** The usual price before this run (SQL: item_price_stats) and how many days of prices it rests on. */
   medianCents: number | null;
   medianDays: number;
   targetCents: number | null;
@@ -452,7 +434,7 @@ function lineOf(r: Reason, primary: boolean, primarySeller: string): string {
       return primary ? `Aiempi alin ${ref}` : `Uusi alin hinta (aiempi ${ref})`;
     case "below_median":
       return primary
-        ? `Tavallinen hinta ${ref} (30 pv mediaani)`
+        ? `Tavallinen hinta ${ref}`
         : `${pctBelow(r.priceCents, r.refCents!)} % alle tavallisen ${ref}`;
     case "drop":
       return primary
@@ -516,7 +498,7 @@ export function buildEvent(
 export const RULE_LABELS: Record<RuleName, string> = {
   below_target: "Alle tavoitehinnan",
   all_time_low: "Kaikkien aikojen alin",
-  below_median: "Alle 30 pv mediaanin",
+  below_median: "Alle tavallisen hinnan",
   drop: "Hinnanpudotus",
   back_in_stock: "Palasi varastoon",
   suspicious_discount: "Epäilyttävä tarjous",

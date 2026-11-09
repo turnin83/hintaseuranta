@@ -157,7 +157,7 @@ terveysvahti alla). Julkisessa repossa Actions-ajot ovat ilmaisia.
 ## Tarjoukset nyt
 
 Välilehti listaa tuotteet, joiden paras saatavilla oleva hinta on vähintään 5 / 10 / 20 % alle
-30 päivän mediaanin, alittaa tavoitehinnan tai on kaikkien aikojen alin (vähintään 6 havaintoa).
+tavallisen hinnan, alittaa tavoitehinnan tai on kaikkien aikojen alin (vähintään 6 havaintoa).
 Järjestys: suurin alennus ensin, tavoitteen alitus ja alin koskaan nostavat. Vertailu tehdään omaan
 historiaan, ei kaupan ilmoittamaan "ennen"-hintaan.
 
@@ -179,7 +179,7 @@ Poikkeus: kampanjan aikana *Alle tavoitehinnan* ja *Uusi alin hinta* pushataan h
 ## Ostettu ja säästö
 
 Tuotesivu → **Merkitse ostetuksi** (hinta, kauppa, päivä): seuranta ja hälytykset loppuvat (`active = false`),
-historia säilyy. Säästö = tuotteen tavallinen hinta (30 pv mediaani ostohetkellä) − ostohinta. Toivelistan
+historia säilyy. Säästö = tuotteen tavallinen hinta ostohetkellä − ostohinta. Toivelistan
 lopussa *Ostetut (n) · säästit X €*. *Peru ostos* palauttaa seurannan.
 
 ## Ostokset ja roskakori
@@ -216,6 +216,13 @@ käyttämistä varten (toisto aikaisintaan 72 h välein tai kun hinta laskee lis
   Tuotesivu näyttää huomautuksen, jos hinnat eroavat yli 5 % (ja vähintään 1 €) ja lukemat ovat enintään
   6 tunnin päässä toisistaan. Ei hälytyksiä.
 
+## Arvonlisävero
+
+Hintojen pitää olla verollisia. csx4-alustan kaupoilla (Ykköspalvelu, Pemic) JSON-LD voi kertoa hinnan ilman
+veroa, joten hinta luetaan tuotelomakkeen kentästä; jos kenttää ei ole, hintaa ei tallenneta. Alusta tunnistetaan
+sivusta, joten uudet saman alustan kaupat toimivat itsestään. `npm run shops:check` ja testit varoittavat, jos
+sivulla näkyy myös luettu hinta + 25,5 %.
+
 ## Toimituskulut
 
 Sivutietona hintojen alla (*toimitettuna X €* / *ilmainen toimitus*), ei vaikuta vertailuun eikä hälytyksiin.
@@ -230,13 +237,13 @@ kampanjan aikana).
 
 ## Hintahistoria ennen seurannan alkua (hintaopas.fi)
 
-Jos tuote lisätään kesken alennuksen, oma 30 päivän mediaani olisi alennushinta, eikä alennusta huomattaisi.
+Jos tuote lisätään kesken alennuksen, oma tavallinen hinta olisi alennushinta, eikä alennusta huomattaisi.
 Siksi hintaopas.fi-linkin tuotesivulta luetaan *Hintahistoria* (markkinan alin hinta noin 3 kk, muutospisteinä;
 maksulliset jäsenhinnat pois). Kerran linkkiä kohden historiasta tallennetaan päiväkohtaiset arvot tuotteen
 ensimmäistä omaa havaintoa edeltäviltä päiviltä pseudomyyjänä `#history` (`price_observations.history_shop` =
 kauppa, jolla alin hinta oli).
 
-- Historia lasketaan mukaan tavalliseen hintaan (30 pv mediaani), alimpaan hintaan, tarjousarvioihin ja
+- Historia lasketaan mukaan tavalliseen hintaan, alimpaan hintaan, tarjousarvioihin ja
   hälytyksiin. Uusi tuote, jolla on historia, ei aloita hiljaa: jos alennus on jo päällä, siitä tulee hälytys heti.
 - Se ei ole kauppa: `v_series` jättää sen pois hintalistasta. Hintakäyrässä se näkyy harmaana viivana.
 - *Hinta oli alempi* -varoitukset kertovat päivän ja kaupan; tuotesivun *Alin koskaan* samoin.
@@ -299,9 +306,14 @@ varoitus. Esimerkki: *Alle tavoitehinnan: 199 €* · Verkkokauppa.com · Uusi a
 |---|---|
 | Alle tavoitehinnan | kun hinta menee tavoitteen alle; uudelleen vain, jos laskee vielä selvästi tai käy välillä yli |
 | Kaikkien aikojen alin | selvästi (≥ 1 € ja ≥ 1 %) alle aiemman alimman, vähintään 6 havaintoa |
-| Alle tavallisen hinnan | ≥ 10 % alle 30 pv päiväminimien mediaanin; tilasidonnainen kuten tavoite |
+| Alle tavallisen hinnan | ≥ 10 % alle tavallisen hinnan; tilasidonnainen kuten tavoite |
 
 Tilasidonnaisuus tallentuu `wish_items.alert_state`-kenttään; ensimmäinen arvio vain kirjaa tilan (ei hälytystä).
+
+**Tavallinen hinta** on pienempi 30 ja 90 päivän mediaaneista (päivän alin saatavilla oleva hinta, mukana
+hintaoppaan historia). Kun halvat myyjät poistuvat ja jäljelle jää yksi kallis kauppa, 30 päivän luku nousee,
+mutta 90 päivän luku pitää vertailun tolkussa. Sääntö voi vain pienentää alennusprosenttia. Sama laskenta
+(`item_price_stats`) palvelee näkymiä, hälytyksiä ja ostoksia, ja *Hinta oli alempi* -varoitus katsoo samat 90 päivää.
 
 **Kauppataso**: hinnanpudotus (≥ 5 % ja ≥ 1 €) ja varastoon palaaminen, oletuksena vain jos kauppa on
 sen jälkeen tuotteen halvin. Paluu hintaan, joka kaupalla oli jo viimeisen 7 päivän aikana, ei ole pudotus
