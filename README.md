@@ -284,6 +284,7 @@ Tarkista viikkoa ennen: Asetukset → *Viimeisimmät haut* ja *Kaupat* (virheet,
 | Edge Function CPU | 2 s / pyyntö | Verkko-odotus ei kuluta. JSON-LD-parsinta on regex-pohjainen (ei DOM:ia), jotta isot sivut (VK ~1 Mt) mahtuvat. |
 | Kutsuja | 500 000 / kk | Tick 15 min välein ≈ 3 000/kk, ja kutsu tehdään vain kun jokin linkki on erääntynyt. |
 | Tietokanta | 500 Mt | Havainto ~100 t: 100 linkkiä × 24/pv × vuosi ≈ 90 Mt. `cleanup-logs` siivoaa cron/pg_net-lokit. |
+| API-rivit | 1000 / kysely (oletus) | Isot tuotteet ylittävät sen. Laskenta ja käyrät koostetaan tietokannassa: `item_price_stats`, `item_chart_points` (vain hinnan muutoskohdat, porrasviivasta ei katoa mitään) ja `v_item_trend`. |
 | **Pausetus** | ~7 pv käyttämättömyys | ⚠️ Suurin riski: pausetettu projekti ei aja cronia. pg_cronin sisäinen ajo ei välttämättä riitä aktiivisuudeksi → keepalive-workflow + oma käyttö. |
 
 Jos jokin kauppa estää myös Supabasen datakeskus-IP:t (Cloudflare-kaupat voivat toimia kotiverkosta mutta

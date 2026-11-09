@@ -59,12 +59,8 @@ export function ListView() {
     // fetch, which already stored the price history.
     supabase.from("product_links").select("wish_item_id, shops!inner(domain)").eq("shops.domain", "hintaopas.fi")
       .then(({ data }) => setWithHintaopas(new Set((data ?? []).map((l) => l.wish_item_id as string))));
-    supabase.from("v_item_daily").select("wish_item_id, day, min_cents").order("day").then(({ data }) => {
-      const m = new Map<string, number[]>();
-      for (const r of (data ?? []) as { wish_item_id: string; min_cents: number }[]) {
-        m.set(r.wish_item_id, [...(m.get(r.wish_item_id) ?? []), r.min_cents]);
-      }
-      setTrend(m);
+    supabase.from("v_item_trend").select("wish_item_id, mins").then(({ data }) => {
+      setTrend(new Map(((data ?? []) as { wish_item_id: string; mins: number[] }[]).map((r) => [r.wish_item_id, r.mins])));
     });
   }, [dataVersion.value]);
 

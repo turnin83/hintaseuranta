@@ -117,16 +117,7 @@ export function ItemView({ id }: { id: string }) {
       return;
     }
     const days = RANGES.find((r) => r.key === range)!.days;
-    let q = supabase
-      .from("price_observations")
-      .select("product_link_id, seller, ts, price_cents")
-      .in("product_link_id", links.map((l) => l.id))
-      .order("ts")
-      .limit(10000);
-    if (days) q = q.gte("ts", new Date(Date.now() - days * 86_400_000).toISOString());
-    q.then(({ data }) =>
-      setPoints((data ?? []).map((o) => ({ key: `${o.product_link_id}|${o.seller}`, ts: o.ts, price_cents: o.price_cents })))
-    );
+    supabase.rpc("item_chart_points", { p_item: id, p_days: days }).then(({ data }) => setPoints((data ?? []) as ChartPoint[]));
   }, [links, range]);
 
   if (missing) {
