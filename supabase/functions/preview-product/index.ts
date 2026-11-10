@@ -2,11 +2,12 @@
 //                  POST {query} -> hinta.fi product search results (pick one, then preview its url).
 // Also registers the shop domain for the household (or refreshes its probe data).
 import { adminClient, CORS, json, userFromRequest } from "../_shared/http.ts";
-import { createRobotsCache, fetchPage } from "../_shared/fetcher.ts";
+import { createRobotsCache } from "../_shared/fetcher.ts";
 import { extractPage } from "../_shared/extract.ts";
 import { enrichPage } from "../_shared/enrich.ts";
 import { domainOf, findUrl, normalizeUrl } from "../_shared/url.ts";
 import { hintaFiSearchUrl, parseHintaFiSearch } from "../_shared/search.ts";
+import { fetchRespectingCooldown } from "../_shared/cooldown.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -23,9 +24,10 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({})) as { url?: string; query?: string };
 
   if (body.query && !findUrl(body.query)) {
-    const s = await fetchPage(hintaFiSearchUrl(body.query), createRobotsCache(), 15_000);
-    if (s.error) return json({ error: `Haku epäonnistui: ${s.error}` }, 502);
-    return json({ query: body.query.trim(), results: parseHintaFiSearch(s.html).slice(0, 15) });
+    const { page: s, cooldown, error } = await fetchRespectingCooldown(admin, hintaFiSearchUrl(body.query), createRobotsCache(), 15_000);
+    if (error) return json({ error, cooldown_until: cooldown?.until ?? null }, 503);
+    if (s!.error) return json({ error: `Haku epäonnistui: ${s!.error}` }, 502);
+    return json({ query: body.query.trim(), results: parseHintaFiSearch(s!.html).slice(0, 15) });
   }
   let url: string;
   try {
@@ -35,12 +37,16 @@ Deno.serve(async (req) => {
   }
   const domain = domainOf(url);
 
-  const f = await fetchPage(url, createRobotsCache(), 15_000);
+  // A paused site (hinta.fi after a block) is not asked; the user gets the reason instead.
+  const fetched = await fetchRespectingCooldown(admin, url, createRobotsCache(), 15_000);
+  if (!fetched.page) return json({ error: fetched.error, cooldown_until: fetched.cooldown?.until ?? null }, 503);
+  const f = fetched.page;
   const parsed = f.html && !f.blocked ? extractPage(f.html, url) : null;
   const page = parsed ? await enrichPage(parsed, url) : null;
 
   let suggestion: string | null = null;
   if (f.robotsAllowed === false) suggestion = "Kaupan robots.txt kieltää tämän sivun haun.";
+  else if (fetched.error) suggestion = fetched.error;
   else if (f.blocked) {
     suggestion = "Kauppa estää automaattiset haut. Lisää sama tuote hintaopas.fi- tai hinta.fi-linkillä ja valitse kauppa listasta.";
   } else if (!page || page.offers.length === 0) {

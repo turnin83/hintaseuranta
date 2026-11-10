@@ -47,6 +47,7 @@ import {
 import type { Availability, Offer, PageData, PricePoint } from "../_shared/types.ts";
 import { pushToHousehold } from "../_shared/push.ts";
 import { enrichPage } from "../_shared/enrich.ts";
+import { COOLDOWN_DOMAINS, cooldownMessage, getCooldown, isCoolingDown, startCooldown } from "../_shared/cooldown.ts";
 
 const TIME_BUDGET_MS = 110_000; // wall clock limit on the free plan is 150 s
 const MAX_LINKS = 150;
@@ -241,6 +242,15 @@ Deno.serve(async (req) => {
   const runQueue = async (shopId: number) => {
     const shop = shopById.get(shopId)!;
     const queue = queues.get(shopId)!;
+    // A site that banned us (hinta.fi) is left alone until its pause ends; the links stay due.
+    const paused = COOLDOWN_DOMAINS.has(shop.domain) ? await getCooldown(admin, shop.domain) : null;
+    if (isCoolingDown(paused)) {
+      released.push(...queue.map((l) => l.id));
+      for (const hid of new Set(queue.map((l) => l.household_id))) {
+        ctxFor(hid).errors.push({ url: shop.domain, error: cooldownMessage(shop.domain, paused!.until) });
+      }
+      return;
+    }
     for (let i = 0; i < queue.length; i++) {
       const link = queue[i];
       if (Date.now() > deadline) {
@@ -254,6 +264,7 @@ Deno.serve(async (req) => {
         const r = await processLink(admin, robots, link, shop, item, rulesFor(item), isMutedFor(item.household_id), ctx);
         if (r === true) touchedItems.add(item.id);
         if (r === "blocked") {
+          if (COOLDOWN_DOMAINS.has(shop.domain)) await startCooldown(admin, shop.domain, `Bot protection on ${link.url}`);
           // The shop blocks us: leave its other links to a later tick instead of insisting.
           released.push(...queue.slice(i + 1).map((l) => l.id));
           return;

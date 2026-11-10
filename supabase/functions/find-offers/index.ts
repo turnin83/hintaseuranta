@@ -5,7 +5,8 @@
 //   - with product_url (a hinta.fi product page picked from the results): loads that page.
 // Returns the sellers and prices, each flagged `tracked` when the item already follows that shop.
 import { adminClient, CORS, json, userFromRequest } from "../_shared/http.ts";
-import { createRobotsCache, fetchPage, sleep } from "../_shared/fetcher.ts";
+import { createRobotsCache, sleep } from "../_shared/fetcher.ts";
+import { fetchRespectingCooldown } from "../_shared/cooldown.ts";
 import { extractPage } from "../_shared/extract.ts";
 import { HINTAFI, hintaFiSearchUrl, parseHintaFiSearch, sellerKey, sellerMatchesShop, type SearchHit } from "../_shared/search.ts";
 
@@ -58,19 +59,21 @@ Deno.serve(async (req) => {
     if (!body.product_url.startsWith(HINTAFI + "/")) return json({ error: "Vain hinta.fi-tuotesivut" }, 400);
     target = body.product_url;
   } else {
-    const s = await fetchPage(hintaFiSearchUrl(query), robots, 15_000);
-    if (s.error) return json({ error: `hinta.fi-haku epäonnistui: ${s.error}` }, 502);
-    results = parseHintaFiSearch(s.html).slice(0, 12);
+    const { page: s, cooldown, error } = await fetchRespectingCooldown(admin, hintaFiSearchUrl(query), robots, 15_000);
+    if (error) return json({ error, cooldown_until: cooldown?.until ?? null }, 503);
+    if (s!.error) return json({ error: `hinta.fi-haku epäonnistui: ${s!.error}` }, 502);
+    results = parseHintaFiSearch(s!.html).slice(0, 12);
     // An EAN search is exact enough to take the first hit; a name search needs the user's pick.
     if (results.length === 1 || (byEan && results.length > 0)) target = results[0].url;
   }
 
   let product = null;
   if (target) {
-    if (results.length) await sleep(1000);
-    const p = await fetchPage(target, robots, 15_000);
-    if (p.error) return json({ error: `hinta.fi-tuotesivu epäonnistui: ${p.error}` }, 502);
-    const page = extractPage(p.html, target);
+    if (results.length) await sleep(5000); // search and product page in a row: give hinta.fi a pause
+    const { page: p, cooldown, error } = await fetchRespectingCooldown(admin, target, robots, 15_000);
+    if (error) return json({ error, cooldown_until: cooldown?.until ?? null }, 503);
+    if (p!.error) return json({ error: `hinta.fi-tuotesivu epäonnistui: ${p!.error}` }, 502);
+    const page = extractPage(p!.html, target);
     product = {
       url: target,
       name: page?.name ?? null,

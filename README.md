@@ -266,7 +266,12 @@ kauppa, jolla alin hinta oli).
 - hinta.fi estää liian tiheästi kysyvän asiakkaan sivulla *Pääsy rajoitettu*, jonka HTTP-tila on 404. Se
   tunnistetaan estoksi (`botcheck.ts`), ei puuttuvaksi tuotteeksi. Estävän kaupan muut linkit jätetään sillä
   kierroksella hakematta, eikä estosta tehdä linkkikohtaisia *Linkki ei toimi* -hälytyksiä (tila näkyy
-  Asetuksissa). hinta.fi:n sivujen väli on vähintään 5 s.
+  Asetuksissa). hinta.fi:n sivujen väli on vähintään 10 s, ja hinta.fi-linkit haetaan enintään 6 tunnin
+  välein (myös kampanjoiden aikana).
+- hinta.fi:n esto koskee palvelimen osoitetta, ja jokainen haku eston aikana pidentää sitä. Siksi esto
+  aloittaa tauon (taulu `host_cooldowns`, `_shared/cooldown.ts`): 6 tuntia, toistuvasta estosta kaksinkertainen,
+  enintään 48 tuntia. Tauon aikana hintahaku, *Etsi muista kaupoista* ja tuotehaku eivät ota yhteyttä
+  hinta.fi:hin, vaan näyttävät viestin, milloin haut jatkuvat. Linkit jäävät jonoon ja haetaan tauon jälkeen.
 
 ## Black Friday -viikko
 
