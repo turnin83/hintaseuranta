@@ -447,15 +447,27 @@ async function noteCrossChecks(admin: SupabaseClient, others: OtherLink[], pageO
 }
 
 /**
- * Aggregator pages: leave out sellers the item already follows elsewhere (its direct shop links, or an
- * earlier comparison link) so one price change is not recorded and alerted twice. The link's seller
+ * Aggregator pages: leave out sellers the item already follows elsewhere (its direct shop links, or a
+ * comparison link that ranks first) so one price change is not recorded and alerted twice. The link's seller
  * selection is updated so the exclusion sticks; history is kept.
  */
-async function dropDuplicateSellers(admin: SupabaseClient, link: LinkRow, offers: Offer[], others: OtherLink[]): Promise<Offer[]> {
+async function dropDuplicateSellers(
+  admin: SupabaseClient,
+  link: LinkRow,
+  domain: string,
+  offers: Offer[],
+  others: OtherLink[],
+): Promise<Offer[]> {
   const sellers = offers.map((o) => o.seller).filter((s): s is string => Boolean(s));
   if (sellers.length === 0) return offers;
   const direct = others.filter((o) => o.shops?.strategy !== "aggregator").map((o) => o.shops);
-  const earlierAgg = others.filter((o) => o.shops?.strategy === "aggregator" && o.created_at < link.created_at).map((o) => o.id);
+  // Another comparison link keeps a shared seller when it ranks first: hintaopas.fi before the others
+  // (hinta.fi bans the server when asked often), then the older link.
+  const rank = (d: string | undefined) => (d === "hintaopas.fi" ? 0 : 1);
+  const earlierAgg = others.filter((o) =>
+    o.shops?.strategy === "aggregator" &&
+    (rank(o.shops.domain) < rank(domain) || (rank(o.shops.domain) === rank(domain) && o.created_at < link.created_at))
+  ).map((o) => o.id);
   let earlierKeys = new Set<string>();
   if (earlierAgg.length) {
     const { data: tracked } = await admin.from("v_series").select("seller").in("product_link_id", earlierAgg).eq("tracked", true).neq("seller", "");
@@ -575,7 +587,7 @@ async function processLink(
   if (page.kind === "aggregator") {
     const others = await otherLinks(admin, link);
     await noteCrossChecks(admin, others, page.offers, shop.name || shop.domain, now);
-    offers = await dropDuplicateSellers(admin, link, offers, others);
+    offers = await dropDuplicateSellers(admin, link, shop.domain, offers, others);
   }
 
   // History per series before this observation (own 30-day low + shop rules).

@@ -216,6 +216,12 @@ käyttämistä varten (toisto aikaisintaan 72 h välein tai kun hinta laskee lis
   Tuotesivu näyttää huomautuksen, jos hinnat eroavat yli 5 % (ja vähintään 1 €) ja lukemat ovat enintään
   6 tunnin päässä toisistaan. Ei hälytyksiä.
 
+## Kauppojen sivujen lukeminen
+
+Ensin JSON-LD (`jsonld.ts`), sitten schema.org-mikrodata (`microdata.ts`, esim. Datatronic ja CS MEGASTORE), sitten
+kauppakohtaiset sovittimet (`adapters.ts`). Päällekkäisistä vertailusivuista hintaopas.fi pitää yhteiset kaupat
+(`dropDuplicateSellers`), koska hinta.fi estää palvelimen tiheiden hakujen jälkeen.
+
 ## Arvonlisävero
 
 Hintojen pitää olla verollisia. csx4-alustan kaupoilla (Ykköspalvelu, Pemic) JSON-LD voi kertoa hinnan ilman
