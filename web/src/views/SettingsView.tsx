@@ -309,7 +309,7 @@ function IntervalSection() {
           </label>
         ))}
       </fieldset>
-      <p class="meta">Kampanjoiden aikana hinnat haetaan tiheämmin (ks. Kampanjat alla). Ajastus tarkistaa 15 minuutin välein, onko jokin linkki erääntynyt.</p>
+      <p class="meta">Kampanjoiden aikana kauppojen hinnat haetaan tiheämmin (ks. Kampanjat alla). Vertailusivut haetaan aina enintään 4 tunnin välein (hinta.fi 6 h) ja muutama sivu kerrallaan. Ajastus tarkistaa 15 minuutin välein, onko jokin linkki erääntynyt.</p>
       <button class="btn" disabled={busy} onClick={fetchAll}>{busy ? "Haetaan…" : "Hae kaikki nyt"}</button>
     </section>
   );
@@ -371,19 +371,26 @@ function ShopsSection() {
 
 /** One line: is collection working? Same limits as the GitHub watchdog (3 h in a campaign, else 26 h). */
 function FetchHealth() {
-  const [h, setH] = useState<{ lastOk: string | null; broken: number } | null>(null);
+  const [h, setH] = useState<{ lastOk: string | null; broken: number; paused: { domain: string; until: string }[] } | null>(null);
   useEffect(() => {
     Promise.all([
       supabase.from("product_links").select("last_fetched_at").eq("last_status", "ok")
         .order("last_fetched_at", { ascending: false }).limit(1).maybeSingle(),
       supabase.from("product_links").select("id, wish_items!inner(deleted_at)", { count: "exact", head: true })
         .eq("active", true).not("failing_since", "is", null).is("wish_items.deleted_at", null),
-    ]).then(([last, broken]) => setH({ lastOk: last.data?.last_fetched_at ?? null, broken: broken.count ?? 0 }));
+      supabase.from("host_cooldowns").select("domain, until").gt("until", new Date().toISOString()),
+    ]).then(([last, broken, paused]) =>
+      setH({
+        lastOk: last.data?.last_fetched_at ?? null,
+        broken: broken.count ?? 0,
+        paused: (paused.data ?? []) as { domain: string; until: string }[],
+      })
+    );
   }, [dataVersion.value]);
   if (!h) return null;
   const c = runningCampaign.value;
   const stale = !h.lastOk || Date.now() - Date.parse(h.lastOk) > (c ? 3 : 26) * 3_600_000;
-  const warn = stale || h.broken > 0;
+  const warn = stale || h.broken > 0 || h.paused.length > 0;
   return (
     <p class={warn ? "claim-warn" : "meta"}>
       {warn && <IconAlert width={16} height={16} />}
@@ -391,6 +398,7 @@ function FetchHealth() {
         {h.lastOk ? `Viimeisin onnistunut haku ${ago(h.lastOk)}` : "Ei vielä onnistuneita hakuja"}
         {h.broken === 0 ? " · kaikki linkit toimivat" : h.broken === 1 ? " · 1 linkki ei toimi" : ` · ${h.broken} linkkiä ei toimi`}
         {c ? ` · ${c.name} käynnissä, haku ${intervalLabel(c.fetch_interval_minutes)}` : ""}
+        {h.paused.map((p) => ` · ${p.domain} rajoittaa hakuja, jatkuu ${dateTime(p.until)}`).join("")}
       </span>
     </p>
   );

@@ -3,7 +3,7 @@ import { parseRobots, robotsAllows, type RobotsGroup } from "./robots.ts";
 import { detectBotMarkers, isBlocked } from "./botcheck.ts";
 
 export const USER_AGENT =
-  "Hintaseuranta/1.0 (+personal price tracker; a few requests per day per product)";
+  "Hintaseuranta/1.1 (+personal price tracker; a product page at most once an hour)";
 
 const HEADERS = {
   "User-Agent": USER_AGENT,

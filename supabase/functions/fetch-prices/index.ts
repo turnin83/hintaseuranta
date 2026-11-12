@@ -47,7 +47,15 @@ import {
 import type { Availability, Offer, PageData, PricePoint } from "../_shared/types.ts";
 import { pushToHousehold } from "../_shared/push.ts";
 import { enrichPage } from "../_shared/enrich.ts";
-import { COOLDOWN_DOMAINS, cooldownMessage, getCooldown, isCoolingDown, startCooldown } from "../_shared/cooldown.ts";
+import {
+  type Cooldown,
+  COOLDOWN_DOMAINS,
+  cooldownMessage,
+  fiUntil,
+  getCooldown,
+  isCoolingDown,
+  startCooldown,
+} from "../_shared/cooldown.ts";
 
 const TIME_BUDGET_MS = 110_000; // wall clock limit on the free plan is 150 s
 const MAX_LINKS = 150;
@@ -71,7 +79,7 @@ type LinkRow = {
   last_status: string | null;
   created_at: string;
 };
-type ShopRow = { id: number; domain: string; name: string | null; strategy: string; min_delay_ms: number };
+type ShopRow = { id: number; household_id: string; domain: string; name: string | null; strategy: string; min_delay_ms: number };
 type ItemRow = {
   id: string;
   household_id: string;
@@ -208,7 +216,7 @@ Deno.serve(async (req) => {
   }
 
   const [shops, items, households] = await Promise.all([
-    admin.from("shops").select("id, domain, name, strategy, min_delay_ms").in("id", [...new Set(links.map((l) => l.shop_id))]),
+    admin.from("shops").select("id, household_id, domain, name, strategy, min_delay_ms").in("id", [...new Set(links.map((l) => l.shop_id))]),
     admin.from("wish_items")
       .select("id, household_id, name, target_price_cents, rules, purchased_at, purchased_price_cents, alert_state")
       .in("id", [...new Set(links.map((l) => l.wish_item_id))]),
@@ -264,7 +272,11 @@ Deno.serve(async (req) => {
         const r = await processLink(admin, robots, link, shop, item, rulesFor(item), isMutedFor(item.household_id), ctx);
         if (r === true) touchedItems.add(item.id);
         if (r === "blocked") {
-          if (COOLDOWN_DOMAINS.has(shop.domain)) await startCooldown(admin, shop.domain, `Bot protection on ${link.url}`);
+          if (COOLDOWN_DOMAINS.has(shop.domain)) {
+            const before = await getCooldown(admin, shop.domain);
+            const c = await startCooldown(admin, shop.domain, `Bot protection on ${link.url}`);
+            if (!isCoolingDown(before) && c.hits === 1) await notifyPause(admin, shop, c, householdById.get(shop.household_id));
+          }
           // The shop blocks us: leave its other links to a later tick instead of insisting.
           released.push(...queue.slice(i + 1).map((l) => l.id));
           return;
@@ -724,6 +736,17 @@ async function evaluateItem(
 
   const draft = buildEvent(reasons, { pushMinPct: rules.push_min_pct, warnings, inflated });
   if (draft) await insertEvent(admin, ctx, item, draft, reasons, null);
+}
+
+/** A site started a pause (the first block in a while): one notice, so a silent outage is not missed. */
+async function notifyPause(admin: SupabaseClient, shop: ShopRow, c: Cooldown, household: HouseholdRow | undefined) {
+  if (inQuietHours(household)) return; // Settings shows it in the morning
+  await pushToHousehold(admin, shop.household_id, {
+    title: `${shop.domain} rajoittaa hakuja`,
+    body: `Haut jatkuvat ${fiUntil(c.until)} jälkeen. Muiden kauppojen hinnat haetaan normaalisti.`,
+    url: "/#/settings",
+    tag: `pause-${shop.domain}`,
+  }).catch(() => {});
 }
 
 /** Name of a campaign running today in the household's time zone, if any. */

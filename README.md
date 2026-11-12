@@ -272,6 +272,12 @@ kauppa, jolla alin hinta oli).
   aloittaa tauon (taulu `host_cooldowns`, `_shared/cooldown.ts`): 6 tuntia, toistuvasta estosta kaksinkertainen,
   enintään 48 tuntia. Tauon aikana hintahaku, *Etsi muista kaupoista* ja tuotehaku eivät ota yhteyttä
   hinta.fi:hin, vaan näyttävät viestin, milloin haut jatkuvat. Linkit jäävät jonoon ja haetaan tauon jälkeen.
+  Tauon alkaessa kotitalous saa yhden ilmoituksen (ei hiljaisina tunteina), ja Asetusten tilarivi näyttää sen.
+- Tahti (`due_link_ids`, `claim_due_links`): vertailusivut haetaan enintään 4 tunnin välein (hinta.fi 6 h)
+  myös kampanjoissa, ja yksi 15 minuutin kierros hakee enintään 3 hinta.fi- ja 5 muun vertailusivun linkkiä,
+  vanhimmat ensin. Pyynnöt jakautuvat tasaisesti eivätkä tule ryöppynä. Kauppojen omat linkit haetaan kuten ennen.
+- Singles Day 2026: tuntihaku 39 hinta.fi-linkille (~900 pyyntöä/vrk) johti estoon 10.11. Esto huomattiin vasta
+  12.11., koska muut kaupat toimivat (siksi ilmoitus).
 
 ## Black Friday -viikko
 
