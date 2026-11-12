@@ -20,7 +20,15 @@ import {
 
 type ItemOpt = { id: string; name: string; eans: string[] };
 
-export function AddView(props: { url: string | null; item: string | null; seller: string | null }) {
+export function AddView(props: {
+  url: string | null;
+  item: string | null;
+  seller: string | null;
+  /** "links": opened from Linkkien korjaus, return there */
+  back?: string | null;
+  /** id of a broken link whose address the new page replaces (history is kept) */
+  replace?: string | null;
+}) {
   // A link shared/pasted after "Lisää suora linkki" goes to the item the user was working on.
   const pending = props.item ? null : getPendingDirectLink();
   const targetItem = props.item ?? pending?.item ?? null;
@@ -38,6 +46,8 @@ export function AddView(props: { url: string | null; item: string | null; seller
   const [sellers, setSellers] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const hunting = hintaopasHuntFor(targetItem);
+  const fromList = props.back === "links";
+  const backTo = (wid?: string) => fromList ? "#/links" : wid ? `#/item/${wid}` : targetItem ? `#/item/${targetItem}` : "#/";
 
   useEffect(() => {
     // Purchased items are not offered, except the one the user came from (e.g. adding its hintaopas link).
@@ -150,18 +160,19 @@ export function AddView(props: { url: string | null; item: string | null; seller
       }
       const allSellers = page.offers.map((o) => o.seller).filter(Boolean);
       const chosenSellers = isAggregator && sellers.size < allSellers.length ? [...sellers] : null;
-      const { data: link, error } = await supabase
-        .from("product_links")
-        .insert({
-          wish_item_id: wid,
-          shop_id: preview.shop.id,
-          url: preview.url,
-          ean: page.ean,
-          model_name: page.name?.slice(0, 200) ?? null,
-          sellers: chosenSellers,
-        })
-        .select("id")
-        .single();
+      const fields = {
+        shop_id: preview.shop.id,
+        url: preview.url,
+        ean: page.ean,
+        model_name: page.name?.slice(0, 200) ?? null,
+        sellers: chosenSellers,
+      };
+      // Replacing a broken link keeps its id, so its price history stays with the item.
+      const { data: link, error } = props.replace
+        ? await supabase.from("product_links")
+          .update({ ...fields, active: true, last_status: null, last_error: null, fail_count: 0, failing_since: null })
+          .eq("id", props.replace).select("id").single()
+        : await supabase.from("product_links").insert({ wish_item_id: wid, ...fields }).select("id").single();
       if (error) {
         if (error.code === "23505") throw new Error("Tämä linkki on jo tällä toiveasialla.");
         throw error;
@@ -175,7 +186,7 @@ export function AddView(props: { url: string | null; item: string | null; seller
       const direct = removed.length ? ` ${removed.join(", ")} haetaan nyt suoraan kaupasta, ei vertailusivulta.` : "";
       toast(`Tallennettu, haetaan ensimmäinen hinta…${direct}`);
       if (mode === "new" && page.kind === "shop" && page.ean) markSuggestHintaFi(wid);
-      go(`#/item/${wid}`);
+      go(backTo(wid));
       invoke("fetch-prices", { link_ids: [link.id] })
         .then(() => {
           toast(`Ensimmäinen hinta tallennettu.${direct}`);
@@ -192,8 +203,23 @@ export function AddView(props: { url: string | null; item: string | null; seller
   return (
     <div class="page stack-lg">
       <div class="stack">
-        <TopBar title={directFor ? `Suora linkki: ${directFor}` : targetItem ? "Lisää linkki" : "Lisää tuote"} parent={targetItem ? `#/item/${targetItem}` : "#/"} />
-        {directFor && !preview && (
+        <TopBar
+          title={props.replace ? "Korvaa linkki" : directFor ? `Suora linkki: ${directFor}` : targetItem ? "Lisää linkki" : "Lisää tuote"}
+          parent={backTo()}
+        />
+        {fromList && !preview && (
+          <div class="notice stack-sm">
+            <span>
+              Hakusana on leikepöydällä. Avaa {directFor ? <strong>{directFor}</strong> : "kaupan"} tuotesivu hakutuloksista,
+              kopioi sen osoite ja palaa tänne: linkki luetaan automaattisesti, tai paina Liitä.
+              {props.replace ? " Uusi osoite korvaa rikkinäisen linkin, ja hintahistoria säilyy." : ""}
+            </span>
+            <div class="actions">
+              <button type="button" class="btn small ghost" onClick={() => { clearPendingDirectLink(); go(backTo()); }}>Peru</button>
+            </div>
+          </div>
+        )}
+        {directFor && !fromList && !preview && (
           <div class="notice">
             Avaa vertailusivulta <strong>{directFor}</strong>, kopioi tuotesivun osoite ja liitä se tähän
             (tai jaa sivu Hinnat-sovellukseen). Tallennuksen jälkeen {directFor} haetaan suoraan kaupasta.

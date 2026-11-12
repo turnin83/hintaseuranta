@@ -1,4 +1,5 @@
-// Tiny hash router: #/ , #/item/<id>, #/deals, #/alerts, #/add?url=..&item=..&seller=.., #/settings
+// Tiny hash router: #/ , #/item/<id>, #/deals, #/alerts, #/add?url=..&item=..&seller=..&back=..&replace=..,
+// #/settings, #/links
 import { signal } from "@preact/signals";
 
 export type Route =
@@ -6,8 +7,9 @@ export type Route =
   | { name: "item"; id: string }
   | { name: "deals" }
   | { name: "alerts" }
-  | { name: "add"; url: string | null; item: string | null; seller: string | null }
-  | { name: "settings" };
+  | { name: "add"; url: string | null; item: string | null; seller: string | null; back: string | null; replace: string | null }
+  | { name: "settings" }
+  | { name: "links" };
 
 function parse(hash: string): Route {
   const [path, query = ""] = hash.replace(/^#/, "").split("?");
@@ -21,9 +23,11 @@ function parse(hash: string): Route {
     case "alerts":
       return { name: "alerts" };
     case "add":
-      return { name: "add", url: q.get("url"), item: q.get("item"), seller: q.get("seller") };
+      return { name: "add", url: q.get("url"), item: q.get("item"), seller: q.get("seller"), back: q.get("back"), replace: q.get("replace") };
     case "settings":
       return { name: "settings" };
+    case "links":
+      return { name: "links" };
     default:
       return { name: "list" };
   }

@@ -32,6 +32,7 @@ export function SettingsView() {
       <HouseholdSection />
       <IntervalSection />
       <CampaignsSection />
+      <LinkRepairSection />
       <ShopsSection />
       <RunsSection />
       <TrashSection />
@@ -311,6 +312,19 @@ function IntervalSection() {
       </fieldset>
       <p class="meta">Kampanjoiden aikana kauppojen hinnat haetaan tiheämmin (ks. Kampanjat alla). Vertailusivut haetaan aina enintään 4 tunnin välein (hinta.fi 6 h) ja muutama sivu kerrallaan. Ajastus tarkistaa 15 minuutin välein, onko jokin linkki erääntynyt.</p>
       <button class="btn" disabled={busy} onClick={fetchAll}>{busy ? "Haetaan…" : "Hae kaikki nyt"}</button>
+    </section>
+  );
+}
+
+function LinkRepairSection() {
+  return (
+    <section class="section stack-sm" aria-labelledby="h-fix">
+      <h2 id="h-fix">Linkkien korjaus</h2>
+      <p class="meta">
+        Kaupat, joilta puuttuu suora linkki, ja rikkinäiset linkit. Korjaus tehdään omassa selaimessa: haku avautuu
+        kaupan sivuille, ja kopioitu tuotelinkki liitetään takaisin.
+      </p>
+      <a class="btn" href="#/links" style="align-self:flex-start">Avaa lista</a>
     </section>
   );
 }

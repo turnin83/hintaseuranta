@@ -216,6 +216,15 @@ käyttämistä varten (toisto aikaisintaan 72 h välein tai kun hinta laskee lis
   Tuotesivu näyttää huomautuksen, jos hinnat eroavat yli 5 % (ja vähintään 1 €) ja lukemat ovat enintään
   6 tunnin päässä toisistaan. Ei hälytyksiä.
 
+## Linkkien korjaus
+
+Asetukset → *Linkkien korjaus* (`#/links`) listaa (1) kaupat, joiden hinta tulee vain vertailusivulta ja jotka ovat
+olleet 30 päivän aikana enintään 5 % halvinta kalliimpia, kaupoittain ryhmiteltynä, ja (2) linkit, jotka eivät ole
+antaneet hintaa vuorokauteen. *Etsi* kopioi tuotteen nimen leikepöydälle, avaa Google-haun kaupan sivuilta
+(`site:<domain>`) ja siirtää lisäysnäkymään, joka lukee kopioidun linkin palatessa ja palaa tallennuksen jälkeen
+listaan. Rikkinäisen linkin uusi osoite korvaa vanhan (sama linkki, historia säilyy). *Ohita* piilottaa rivin tältä
+käyttäjältä (selaimen muisti). Kaupat, jotka estävät haut (`strategy = blocked`), eivät ole listalla.
+
 ## Kauppojen sivujen lukeminen
 
 Ensin JSON-LD (`jsonld.ts`), sitten schema.org-mikrodata (`microdata.ts`, esim. Datatronic ja CS MEGASTORE), sitten

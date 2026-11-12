@@ -10,6 +10,7 @@ import { ItemView } from "./views/ItemView.tsx";
 import { AlertsView } from "./views/AlertsView.tsx";
 import { DealsView } from "./views/DealsView.tsx";
 import { AddView } from "./views/AddView.tsx";
+import { LinksView } from "./views/LinksView.tsx";
 import { SettingsView } from "./views/SettingsView.tsx";
 import { LoginView } from "./views/LoginView.tsx";
 
@@ -44,8 +45,11 @@ export function App() {
         {r.name === "item" && <ItemView key={r.id} id={r.id} />}
         {r.name === "deals" && <DealsView />}
         {r.name === "alerts" && <AlertsView />}
-        {r.name === "add" && <AddView key={`${r.url}|${r.item}|${r.seller}`} url={r.url} item={r.item} seller={r.seller} />}
+        {r.name === "add" && (
+          <AddView key={`${r.url}|${r.item}|${r.seller}|${r.replace}`} url={r.url} item={r.item} seller={r.seller} back={r.back} replace={r.replace} />
+        )}
         {r.name === "settings" && <SettingsView />}
+        {r.name === "links" && <LinksView />}
       </main>
       <TabBar />
       <Toast />
