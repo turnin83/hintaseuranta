@@ -23,3 +23,13 @@ export async function invoke<T>(name: string, body: Record<string, unknown>): Pr
   }
   return data as T;
 }
+
+/** All rows of a query, page by page (the API returns at most 1000 rows per request). */
+export async function allRows<T>(page: (from: number, to: number) => PromiseLike<{ data: unknown[] | null }>): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data } = await page(from, from + 999);
+    out.push(...((data ?? []) as T[]));
+    if (!data || data.length < 1000) return out;
+  }
+}

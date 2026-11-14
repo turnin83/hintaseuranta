@@ -3,7 +3,7 @@
 // words and opens a search restricted to the shop's site; the copied product link is read back in the add
 // view, which returns here after saving.
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { supabase } from "../lib/supabase.ts";
+import { allRows, supabase } from "../lib/supabase.ts";
 import type { ProductLink, Shop, WishSummary } from "../lib/types.ts";
 import { eur } from "../lib/format.ts";
 import { go } from "../lib/router.ts";
@@ -27,16 +27,6 @@ type LinkRow = ProductLink & { failing_since: string | null };
 const DAY = 86_400_000;
 /** A seller is worth a direct link when its 30-day low was at most this much above the item's. */
 const CLOSE = 1.05;
-
-/** All rows of a query, page by page (the API returns at most 1000 rows per request). */
-async function allRows<T>(page: (from: number, to: number) => PromiseLike<{ data: unknown[] | null }>): Promise<T[]> {
-  const out: T[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data } = await page(from, from + 999);
-    out.push(...((data ?? []) as T[]));
-    if (!data || data.length < 1000) return out;
-  }
-}
 
 function useSkipped(): [Set<string>, (key: string) => void] {
   const storeKey = `${session.value?.user.id ?? "anon"}:links-skip`;
