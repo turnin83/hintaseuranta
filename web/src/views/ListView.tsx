@@ -1,18 +1,25 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { supabase } from "../lib/supabase.ts";
-import type { WishSummary } from "../lib/types.ts";
+import { allRows, supabase } from "../lib/supabase.ts";
+import type { Shop, WishSummary } from "../lib/types.ts";
 import { AVAILABILITY, ago, eur, pctDelta, signedPct } from "../lib/format.ts";
+import { asShopItem, compareOther, indexShops, type ShopOffer, type ShopSeriesRow } from "../lib/shop-view.ts";
+import { assessDeal, type DealAssessment, TIERS } from "../lib/deals.ts";
 import { countTags, hasTag } from "../lib/tags.ts";
 import { dataVersion, session } from "../lib/store.ts";
 import { TopBar } from "../components/chrome.tsx";
 import { CampaignBadge } from "../components/CampaignBadge.tsx";
 import { Sparkline } from "../components/Sparkline.tsx";
-import { IconAlert, IconArrowDown, IconArrowUp, IconCheck, IconPlus } from "../components/icons.tsx";
+import { IconAlert, IconArrowDown, IconArrowUp, IconCheck, IconExternal, IconPlus } from "../components/icons.tsx";
 
 type Mode = "list" | "groups";
 type Density = "cards" | "compact";
 const UNTAGGED = "\u0000untagged";
 const NO_HINTAOPAS = "\u0000no-hintaopas"; // items without a hintaopas.fi link (no price history)
+
+/** Shop chosen in the "Kauppa" menu: the list shows that shop's price for each item it sells. */
+type ShopCtx = { name: string; offers: Map<string, ShopOffer>; deals: Map<string, DealAssessment> };
+const SERIES_COLS =
+  "wish_item_id, seller, seller_name, domain, shop_strategy, url, price_cents, ts, availability, shipping_cents, lowest_30d_cents, own_low_30d_cents, obs_count";
 
 // View preferences: stored on this device, per signed-in user (never shared with the household).
 function usePref<T extends string>(name: string, initial: T): [T, (v: T) => void] {
@@ -44,6 +51,9 @@ export function ListView() {
   const [query, setQuery] = useState("");
   const [trend, setTrend] = useState<Map<string, number[]>>(new Map());
   const [withHintaopas, setWithHintaopas] = useState<Set<string> | null>(null);
+  const [shopKey, setShopKey] = usePref<string>("list-shop", "");
+  const [seriesRows, setSeriesRows] = useState<ShopSeriesRow[]>([]);
+  const [shops, setShops] = useState<Pick<Shop, "domain" | "name" | "strategy">[]>([]);
 
   useEffect(() => {
     supabase
@@ -62,7 +72,27 @@ export function ListView() {
     supabase.from("v_item_trend").select("wish_item_id, mins").then(({ data }) => {
       setTrend(new Map(((data ?? []) as { wish_item_id: string; mins: number[] }[]).map((r) => [r.wish_item_id, r.mins])));
     });
+    Promise.all([
+      allRows<ShopSeriesRow>((a, b) => supabase.from("v_series").select(SERIES_COLS).eq("tracked", true).range(a, b)),
+      supabase.from("shops").select("domain, name, strategy"),
+    ]).then(([rows, sh]) => {
+      setSeriesRows(rows);
+      setShops((sh.data ?? []) as Pick<Shop, "domain" | "name" | "strategy">[]);
+    });
   }, [dataVersion.value]);
+
+  const shopIndex = useMemo(() => indexShops(seriesRows, shops), [seriesRows, shops]);
+  const activeShop = shopIndex.options.find((o) => o.key === shopKey) ?? null; // a vanished shop falls back to "all"
+  const shop: ShopCtx | null = useMemo(() => {
+    if (!activeShop) return null;
+    const offers = shopIndex.offers(activeShop.key);
+    const deals = new Map<string, DealAssessment>();
+    for (const i of items ?? []) {
+      const o = offers.get(i.id);
+      if (o) deals.set(i.id, assessDeal(asShopItem(i, o, activeShop.name), shopIndex.obsByItem.get(i.id) ?? 0));
+    }
+    return { name: activeShop.name, offers, deals };
+  }, [shopIndex, activeShop?.key, items]);
 
   const base = (items ?? []).filter((i) => !i.purchased_at && (showInactive || i.active));
   const tagCounts = useMemo(() => countTags(base), [items, showInactive]);
@@ -84,8 +114,15 @@ export function ListView() {
       !activeTag ||
       (activeTag === UNTAGGED ? i.tags.length === 0 : activeTag === NO_HINTAOPAS ? noHintaopas(i) : hasTag(i.tags, activeTag))
     )
-    .filter((i) => !q || i.name.toLocaleLowerCase("fi").includes(q) || i.tags.some((t) => t.toLocaleLowerCase("fi").includes(q)))
-    .sort((a, b) => Number(b.unread_alerts > 0) - Number(a.unread_alerts > 0) || a.priority - b.priority);
+    .filter((i) => !q || i.name.toLocaleLowerCase("fi").includes(q) || i.tags.some((t) => t.toLocaleLowerCase("fi").includes(q)));
+  const inShop = shop ? visible.filter((i) => shop.offers.has(i.id)) : visible;
+  const notInShop = visible.length - inShop.length;
+  // In a shop the best deals come first: "what was on offer here?"
+  const shown = inShop.sort((a, b) =>
+    (shop ? (shop.deals.get(b.id)?.score ?? 0) - (shop.deals.get(a.id)?.score ?? 0) : 0) ||
+    Number(b.unread_alerts > 0) - Number(a.unread_alerts > 0) || a.priority - b.priority
+  );
+  const shopDeals = shop ? shown.filter((i) => (shop.deals.get(i.id)?.score ?? 0) >= 5).length : 0;
 
   const inactiveCount = (items ?? []).filter((i) => !i.active && !i.purchased_at).length;
   const purchased = (items ?? []).filter((i) => i.purchased_at)
@@ -127,6 +164,15 @@ export function ListView() {
               onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
             />
           )}
+          {shopIndex.options.length > 1 && (
+            <label class="field shop-pick">
+              <span>Kauppa</span>
+              <select value={activeShop?.key ?? ""} onChange={(e) => setShopKey((e.target as HTMLSelectElement).value)}>
+                <option value="">Kaikki kaupat (halvin hinta)</option>
+                {shopIndex.options.map((o) => <option key={o.key} value={o.key}>{o.name} ({o.count})</option>)}
+              </select>
+            </label>
+          )}
           {(hasTags || noHintaopasCount > 0) && (
             <div class="list-controls">
               <div class="chips-scroll" role="group" aria-label="Suodata tagilla">
@@ -163,17 +209,26 @@ export function ListView() {
               <button aria-pressed={density === "compact"} onClick={() => setDensity("compact")}>Tiivis</button>
             </div>
           </div>
-          <p class="meta">Viimeisin haku {ago(lastFetch)}</p>
+          <p class="meta">
+            {shop && <>{shopDeals > 0 ? `${shopDeals} ${shopDeals === 1 ? "tarjous" : "tarjousta"} kaupassa ${shop.name} · ` : `Ei tarjouksia kaupassa ${shop.name} · `}</>}
+            Viimeisin haku {ago(lastFetch)}
+          </p>
         </div>
       )}
 
-      {items && items.length > 0 && visible.length === 0 && (
-        <p class="muted">Ei osumia{q ? ` haulla "${query.trim()}"` : ""}.</p>
+      {items && items.length > 0 && shown.length === 0 && (
+        <p class="muted">
+          {shop && visible.length > 0 ? `Kaupasta ${shop.name} ei ole hintaa näille toiveille.` : `Ei osumia${q ? ` haulla "${query.trim()}"` : ""}.`}
+        </p>
       )}
 
-      {visible.length > 0 && (mode === "groups" && hasTags
-        ? <Groups items={visible} order={tagCounts.map((t) => t.tag)} density={density} trend={trend} />
-        : <Items items={visible} density={density} trend={trend} />)}
+      {shown.length > 0 && (mode === "groups" && hasTags
+        ? <Groups items={shown} order={tagCounts.map((t) => t.tag)} density={density} trend={trend} shop={shop} />
+        : <Items items={shown} density={density} trend={trend} shop={shop} />)}
+
+      {shop && notInShop > 0 && shown.length > 0 && (
+        <p class="meta">{notInShop} {notInShop === 1 ? "toive ei ole" : "toivetta ei ole"} seurannassa kaupassa {shop.name}.</p>
+      )}
 
       {inactiveCount > 0 && (
         <button class="btn ghost" onClick={() => setShowInactive(!showInactive)}>
@@ -218,11 +273,112 @@ export function savingsOf(i: WishSummary): number | null {
   return i.purchased_price_cents != null && i.purchased_ref_cents != null ? i.purchased_ref_cents - i.purchased_price_cents : null;
 }
 
-/** One collapsible section per tag (most used first); an item with several tags appears in each. */
-function Items({ items, density, trend }: { items: WishSummary[]; density: Density; trend: Map<string, number[]> }) {
+type ItemsProps = { items: WishSummary[]; density: Density; trend: Map<string, number[]>; shop: ShopCtx | null };
+
+function Items({ items, density, trend, shop }: ItemsProps) {
+  if (shop) {
+    return density === "compact"
+      ? <div class="rows">{items.map((i) => <ShopRow key={i.id} item={i} offer={shop.offers.get(i.id)!} deal={shop.deals.get(i.id)!} />)}</div>
+      : (
+        <div class="list">
+          {items.map((i) => (
+            <ShopCard key={i.id} item={i} shop={shop.name} offer={shop.offers.get(i.id)!} deal={shop.deals.get(i.id)!} trend={trend.get(i.id) ?? []} />
+          ))}
+        </div>
+      );
+  }
   return density === "compact"
     ? <div class="rows">{items.map((i) => <CompactRow key={i.id} item={i} />)}</div>
     : <div class="list">{items.map((i) => <ItemCard key={i.id} item={i} trend={trend.get(i.id) ?? []} />)}</div>;
+}
+
+/** The shop's price against the cheapest other shop, in words. */
+function Comparison({ offer: o }: { offer: ShopOffer }) {
+  const c = compareOther(o);
+  if (c.kind === "only") return <span class="meta">Ei muita kauppoja seurannassa</span>;
+  if (c.kind === "cheapest") return <span class="chip good"><IconCheck /> Halvin, {eur(-c.diff)} alle {o.other!.name}</span>;
+  if (c.kind === "same") return <span class="chip good"><IconCheck /> Sama kuin halvin ({o.other!.name})</span>;
+  return <span class="chip warn">{o.other!.name} {eur(c.diff)} halvempi: {eur(o.other!.cents)}</span>;
+}
+
+/** One item at the chosen shop: the shop's price, whether it is a deal, and the cheapest other shop. */
+function ShopCard({ item: i, shop, offer: o, deal: a, trend }: { item: WishSummary; shop: string; offer: ShopOffer; deal: DealAssessment; trend: number[] }) {
+  const delta = i.usual_cents ? pctDelta(o.price_cents, i.usual_cents) : null;
+  const tierLabel = TIERS.find((t) => t.tier === a.tier)?.label;
+  const out = o.availability === "out_of_stock";
+  return (
+    <div class={`card deal-card${i.active ? "" : " inactive"}`}>
+      <a class="deal-main" href={`#/item/${i.id}`}>
+        <div class="head">
+          <span class="name">{i.name}</span>
+          {i.unread_alerts > 0 && <span class="chip good">{i.unread_alerts} uutta</span>}
+        </div>
+        <div class="price-row">
+          <span class={`price num${o.stale || out ? " is-out" : ""}`}>{eur(o.price_cents)}</span>
+          {delta != null && delta !== 0 && !o.stale && (
+            <span class={`delta num ${delta < 0 ? "down" : "up"}`}>
+              {delta < 0 ? <IconArrowDown width={14} height={14} style="vertical-align:-2px" /> : <IconArrowUp width={14} height={14} style="vertical-align:-2px" />}
+              {" "}{signedPct(delta)} vs tavallinen
+            </span>
+          )}
+          <Sparkline values={trend} />
+          {out && <span class="chip neutral">{AVAILABILITY.out_of_stock}</span>}
+        </div>
+        {o.stale
+          ? <p class="claim-warn"><IconAlert width={16} height={16} /><span>Hinta {ago(o.ts)}: kaupan sivua ei ole luettu hetkeen.</span></p>
+          : (
+            <div class="actions">
+              {a.recommendation === "buy" && <span class="chip good"><IconCheck /> Ostosuositus</span>}
+              {a.recommendation !== "buy" && tierLabel && <span class="chip good">{tierLabel}</span>}
+              {a.recommendation === "consider" && !tierLabel && <span class="chip neutral">Harkitse</span>}
+              {!out && <Comparison offer={o} />}
+            </div>
+          )}
+        {a.reasons.length > 0 && <p class="meta">{a.reasons.join(", ")}</p>}
+        {a.warnings.map((w) => <p class="claim-warn" key={w}><IconAlert width={16} height={16} /><span>{w}</span></p>)}
+        <p class="meta">
+          {i.target_price_cents != null && !a.targetHit && <>Tavoite {eur(i.target_price_cents)} · </>}
+          {o.shipping_cents != null && (o.shipping_cents === 0 ? "Ilmainen toimitus · " : `Toimitettuna ${eur(o.price_cents + o.shipping_cents)} · `)}
+          päivitetty {ago(o.ts)}
+        </p>
+      </a>
+      <a class={`btn deal-shop${a.recommendation === "buy" ? " primary" : ""}`} href={o.url} target="_blank" rel="noopener noreferrer">
+        <IconExternal /> Avaa {shop}
+      </a>
+    </div>
+  );
+}
+
+/** Compact row at the chosen shop: price · change vs usual · cheapest other shop. */
+function ShopRow({ item: i, offer: o, deal: a }: { item: WishSummary; offer: ShopOffer; deal: DealAssessment }) {
+  const delta = i.usual_cents && !o.stale ? pctDelta(o.price_cents, i.usual_cents) : null;
+  const out = o.availability === "out_of_stock";
+  const c = compareOther(o);
+  return (
+    <a class={`row-item${i.active ? "" : " inactive"}`} href={`#/item/${i.id}`}>
+      <span class={`row-dot${i.unread_alerts > 0 ? " on" : ""}`} aria-hidden="true" />
+      <span class="row-main">
+        <span class="row-name">
+          {i.name}
+          {i.unread_alerts > 0 && <span class="visually-hidden"> ({i.unread_alerts} uutta hälytystä)</span>}
+        </span>
+        <span class="row-sub">
+          <span class={`row-price num${a.targetHit ? " is-hit" : ""}${out || o.stale ? " is-out" : ""}`}>
+            {a.targetHit && <IconCheck aria-label="Tavoite alittui" />}
+            {eur(o.price_cents)}
+          </span>
+          {delta != null && delta !== 0 && <span class={`row-delta num ${delta < 0 ? "down" : "up"}`}>{signedPct(delta)}</span>}
+          <span class="row-seller">
+            {o.stale ? `hinta ${ago(o.ts)}` : out ? "loppu"
+              : c.kind === "cheapest" || c.kind === "same" ? "halvin"
+              : c.kind === "dearer" ? `${o.other!.name} ${eur(c.diff)} halvempi`
+              : ""}
+          </span>
+          {i.failing_links > 0 && <IconAlert class="row-warn" aria-label="Linkki ei toimi" />}
+        </span>
+      </span>
+    </a>
+  );
 }
 
 /** Compact two-level row: name on top, price · change · shop underneath. */
@@ -254,7 +410,8 @@ function CompactRow({ item: i }: { item: WishSummary }) {
   );
 }
 
-function Groups({ items, order, density, trend }: { items: WishSummary[]; order: string[]; density: Density; trend: Map<string, number[]> }) {
+/** One collapsible section per tag (most used first); an item with several tags appears in each. */
+function Groups({ items, order, density, trend, shop }: ItemsProps & { order: string[] }) {
   const groups = order
     .map((tag) => ({ tag, items: items.filter((i) => hasTag(i.tags, tag)) }))
     .filter((g) => g.items.length > 0);
@@ -272,7 +429,7 @@ function Groups({ items, order, density, trend }: { items: WishSummary[]; order:
               <span class="meta">{g.items.length} {g.items.length === 1 ? "tuote" : "tuotetta"}</span>
               {unread > 0 && <span class="chip good">{unread} uutta</span>}
             </summary>
-            <Items items={g.items} density={density} trend={trend} />
+            <Items items={g.items} density={density} trend={trend} shop={shop} />
           </details>
         );
       })}

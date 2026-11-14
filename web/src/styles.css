@@ -393,6 +393,8 @@ details.group > .list { padding-bottom: var(--sp-2); }
   font-family: var(--font-display); font-size: 20px; font-weight: 700;
 }
 .deal-shop { justify-self: start; }
+.deal-card.inactive { opacity: 0.6; }
+.deal-main .price.is-out { color: var(--text-3); }
 
 /* ---------- Find offers ---------- */
 .hit {

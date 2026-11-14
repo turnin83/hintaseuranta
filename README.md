@@ -40,6 +40,10 @@ Kauppoja ei ole kovakoodattu. Kun liität minkä tahansa tuotesivun, `preview-pr
 - **Etsi muista kaupoista** (toiveasian detalji): hakee hinta.fi:stä saman tuotteen EAN-koodilla
   (tai nimellä, jolloin valitaan oikea osuma) ja näyttää kaupat, joita ei vielä seurata. Valitut kaupat
   tallentuvat yhdellä hinta.fi-linkillä. hintaopas.fi:n haku on robots.txt:ssä kielletty, joten sitä ei käytetä.
+- **Toivelista kaupoittain**: listan "Kauppa"-valikosta valitaan kauppa (esim. kun ollaan sen
+  verkkosivuilla). Lista näyttää vain toiveet, joille kaupasta on hinta, ja jokaiselle kaupan oman hinnan,
+  muutoksen tavalliseen hintaan, tarjousluokan ja halvimman muun kaupan. Vertailusivun myyjä ja saman
+  kaupan suora linkki ovat sama kauppa. Yli 36 h vanha hinta näytetään vanhana eikä sitä verrata.
 - **Vertailusivu**: jos kauppa estää botit (esim. **Gigantti**: Vercel Security Checkpoint, 429), lisää
   tuote `hintaopas.fi`- tai `hinta.fi`-linkillä ja valitse listasta tallennettavat kaupat (esim. vain Gigantti).
 
