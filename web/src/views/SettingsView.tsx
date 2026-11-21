@@ -11,6 +11,7 @@ import { type Campaign, fiDate, intervalLabel, isRunning, refreshCampaigns, runn
 import { restoreItem, TRASH_DAYS } from "../lib/trash.ts";
 import type { WishSummary } from "../lib/types.ts";
 import { eur } from "../lib/format.ts";
+import { qtyPrefix, savingsOf, spentOf } from "../lib/purchases.ts";
 import { RulesForm, rulesSummary } from "../components/RulesForm.tsx";
 import { DEFAULT_RULES, diffRules, mergeRules, type Rules } from "@shared/rules.ts";
 
@@ -550,10 +551,9 @@ function PurchasesSection() {
   }, [dataVersion.value]);
   if (items.length === 0) return null;
 
-  const saved = (i: WishSummary) =>
-    i.purchased_ref_cents != null && i.purchased_price_cents != null ? Math.max(0, i.purchased_ref_cents - i.purchased_price_cents) : 0;
+  const saved = (i: WishSummary) => Math.max(0, savingsOf(i) ?? 0);
   const total = items.reduce((n, i) => n + saved(i), 0);
-  const spent = items.reduce((n, i) => n + (i.purchased_price_cents ?? 0), 0);
+  const spent = items.reduce((n, i) => n + spentOf(i), 0);
   const byCampaign = campaigns
     .map((c) => {
       const inIt = items.filter((i) => { const d = localDay(i.purchased_at!); return c.starts_on <= d && d <= c.ends_on; });
@@ -587,7 +587,7 @@ function PurchasesSection() {
               <span class="row-main">
                 <span class="row-name">{i.name}</span>
                 <span class="row-sub">
-                  <span class="row-price num">{eur(i.purchased_price_cents!)}</span>
+                  <span class="row-price num">{qtyPrefix(i)}{eur(i.purchased_price_cents!)}</span>
                   {saved(i) > 0 && <span class="row-delta down num">säästö {eur(saved(i))}</span>}
                   <span class="row-seller">{i.purchased_seller ?? ""} · {new Date(i.purchased_at!).toLocaleDateString("fi-FI")}</span>
                 </span>

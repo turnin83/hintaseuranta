@@ -3,6 +3,7 @@ import { allRows, supabase } from "../lib/supabase.ts";
 import type { Shop, WishSummary } from "../lib/types.ts";
 import { AVAILABILITY, ago, eur, pctDelta, signedPct } from "../lib/format.ts";
 import { asShopItem, compareOther, indexShops, type ShopOffer, type ShopSeriesRow } from "../lib/shop-view.ts";
+import { qtyPrefix, savingsOf } from "../lib/purchases.ts";
 import { assessDeal, type DealAssessment, TIERS } from "../lib/deals.ts";
 import { countTags, hasTag } from "../lib/tags.ts";
 import { dataVersion, session } from "../lib/store.ts";
@@ -252,7 +253,7 @@ export function ListView() {
                     <span class="row-main">
                       <span class="row-name">{i.name}</span>
                       <span class="row-sub">
-                        <span class="row-price num">{eur(i.purchased_price_cents!)}</span>
+                        <span class="row-price num">{qtyPrefix(i)}{eur(i.purchased_price_cents!)}</span>
                         {saved != null && saved > 0 && <span class="row-delta down num">säästö {eur(saved)}</span>}
                         <span class="row-seller">{i.purchased_seller ?? ""} · {new Date(i.purchased_at!).toLocaleDateString("fi-FI")}</span>
                       </span>
@@ -266,11 +267,6 @@ export function ListView() {
       )}
     </div>
   );
-}
-
-/** Saved vs the usual (30 d median) price at purchase time; null when unknown. */
-export function savingsOf(i: WishSummary): number | null {
-  return i.purchased_price_cents != null && i.purchased_ref_cents != null ? i.purchased_ref_cents - i.purchased_price_cents : null;
 }
 
 type ItemsProps = { items: WishSummary[]; density: Density; trend: Map<string, number[]>; shop: ShopCtx | null };

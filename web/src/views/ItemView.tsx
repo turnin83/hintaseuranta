@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { invoke, supabase } from "../lib/supabase.ts";
 import type { AlertEvent, ProductLink, Series, WishSummary } from "../lib/types.ts";
 import { AVAILABILITY, PRIORITY, ago, centsToInput, eur, hostOf, parseEurInput } from "../lib/format.ts";
+import { qtyOf, qtyPrefix, savingsOf, spentOf } from "../lib/purchases.ts";
 import { go } from "../lib/router.ts";
 import { dataVersion, refreshUnread, toast } from "../lib/store.ts";
 import { TopBar } from "../components/chrome.tsx";
@@ -683,52 +684,67 @@ async function priceLevelBefore(itemId: string, before: string): Promise<PriceLe
   return data as PriceLevel | null;
 }
 
+/** Pieces from a form field: a whole number 1–999, else null. */
+function parseQty(v: string): number | null {
+  const n = Number(v.trim());
+  return Number.isInteger(n) && n >= 1 && n <= 999 ? n : null;
+}
+
 function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [price, setPrice] = useState(centsToInput(item.best_price_cents));
   const [seller, setSeller] = useState(item.best_seller ?? "");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [qty, setQty] = useState("1");
   const [busy, setBusy] = useState(false);
   const [level, setLevel] = useState<PriceLevel | null>(null);
   const [editRef, setEditRef] = useState<string | null>(null);
+  const [editQty, setEditQty] = useState("1");
 
   useEffect(() => {
     if (item.purchased_at) priceLevelBefore(item.id, item.purchased_at).then(setLevel);
   }, [item.id, item.purchased_at]);
 
   if (item.purchased_at) {
-    const saved = item.purchased_ref_cents != null && item.purchased_price_cents != null
-      ? item.purchased_ref_cents - item.purchased_price_cents
-      : null;
+    const n = qtyOf(item);
+    const saved = savingsOf(item);
     const lowBefore = level?.low_cents != null ? { cents: level.low_cents, ts: level.low_ts!, where: level.low_shop } : null;
     const wasCheaper = lowBefore != null && item.purchased_price_cents != null &&
       item.purchased_price_cents - lowBefore.cents >= 100 && lowBefore.cents < item.purchased_price_cents * 0.99;
     const saveRef = async () => {
       const cents = editRef?.trim() ? parseEurInput(editRef) : null;
       if (editRef?.trim() && cents == null) return toast("Hinta ei ole kelvollinen luku");
-      const { error } = await supabase.from("wish_items").update({ purchased_ref_cents: cents }).eq("id", item.id);
+      const pieces = parseQty(editQty);
+      if (pieces == null) return toast("Määrä on 1–999 kpl");
+      const { error } = await supabase.from("wish_items").update({ purchased_ref_cents: cents, purchased_qty: pieces }).eq("id", item.id);
       if (error) return toast(error.message);
       setEditRef(null);
-      toast("Tavallinen hinta tallennettu");
+      toast("Ostos tallennettu");
       onSaved();
     };
     const watchDays = Math.max(0, AFTER_PURCHASE_DAYS - Math.floor((Date.now() - Date.parse(item.purchased_at)) / 86_400_000));
     const undo = async () => {
       if (!confirm("Perutaanko ostomerkintä (esim. tuote palautettiin)? Seuranta ja hälytykset jatkuvat, historia säilyy.")) return;
       const { error } = await supabase.from("wish_items").update({
-        purchased_at: null, purchased_price_cents: null, purchased_seller: null, purchased_ref_cents: null, active: true,
+        purchased_at: null, purchased_price_cents: null, purchased_seller: null, purchased_ref_cents: null, purchased_qty: 1, active: true,
       }).eq("id", item.id);
       if (error) toast(error.message);
       else { toast("Seuranta jatkuu"); onSaved(); }
     };
     return (
       <div class="card purchased stack-sm">
-        <strong>Ostettu {new Date(item.purchased_at).toLocaleDateString("fi-FI")}: {eur(item.purchased_price_cents!)}{item.purchased_seller ? `, ${item.purchased_seller}` : ""}</strong>
+        <strong class="num">
+          Ostettu {new Date(item.purchased_at).toLocaleDateString("fi-FI")}: {qtyPrefix(item)}{eur(item.purchased_price_cents!)}
+          {n > 1 ? ` (yhteensä ${eur(spentOf(item))})` : ""}{item.purchased_seller ? `, ${item.purchased_seller}` : ""}
+        </strong>
         {saved != null && saved > 0 && (
-          <p class="reco reco-buy">Säästit {eur(saved)} tavalliseen hintaan ({eur(item.purchased_ref_cents!)}) verrattuna.</p>
+          <p class="reco reco-buy num">
+            Säästit {eur(saved)} tavalliseen hintaan ({eur(item.purchased_ref_cents!)}{n > 1 ? "/kpl" : ""}) verrattuna
+            {n > 1 ? `: ${eur(saved / n)} × ${n} kpl` : ""}.
+          </p>
         )}
         {saved != null && saved <= 0 && (
-          <p class="meta num">Tavallinen hinta ostohetkellä {eur(item.purchased_ref_cents!)}: ei säästöä.</p>
+          <p class="meta num">Tavallinen hinta ostohetkellä {eur(item.purchased_ref_cents!)}{n > 1 ? "/kpl" : ""}: ei säästöä.</p>
         )}
         {wasCheaper ? (
           <p class="claim-warn">
@@ -741,12 +757,15 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
           <p class="meta num">Alin hinta 3 kk ennen ostoa: {eur(lowBefore.cents)} ({[lowBefore.where, fiDay(lowBefore.ts)].filter(Boolean).join(", ")}).</p>
         )}
         {editRef == null ? (
-          <button class="btn ghost small" style="align-self:flex-start" onClick={() => setEditRef(centsToInput(item.purchased_ref_cents))}>
-            Muokkaa tavallista hintaa
+          <button class="btn ghost small" style="align-self:flex-start" onClick={() => { setEditQty(String(n)); setEditRef(centsToInput(item.purchased_ref_cents)); }}>
+            Muokkaa määrää tai tavallista hintaa
           </button>
         ) : (
           <div class="stack-sm">
-            <label class="field"><span>Tavallinen hinta ostohetkellä (€)</span>
+            <label class="field"><span>Kappaletta</span>
+              <input inputMode="numeric" value={editQty} onInput={(e) => setEditQty((e.target as HTMLInputElement).value)} />
+            </label>
+            <label class="field"><span>Tavallinen hinta ostohetkellä (€/kpl)</span>
               <input inputMode="decimal" value={editRef} onInput={(e) => setEditRef((e.target as HTMLInputElement).value)} />
             </label>
             <p class="meta">Laske historiasta = tavallinen hinta ennen ostoa, mukana hintaoppaan hintahistoria.</p>
@@ -767,7 +786,7 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
           <p class="meta">Hintoja ei enää haeta eikä hälytyksiä tule. Historia säilyy.</p>
         )}
         {item.best_price_cents != null && item.purchased_price_cents != null && item.best_price_cents < item.purchased_price_cents && (
-          <p class="reco reco-buy"><strong>Hinta on nyt {eur(item.best_price_cents)}</strong> ({item.best_seller}), {eur(item.purchased_price_cents - item.best_price_cents)} vähemmän kuin maksoit.</p>
+          <p class="reco reco-buy"><strong>Hinta on nyt {eur(item.best_price_cents)}</strong> ({item.best_seller}), {eur(item.purchased_price_cents - item.best_price_cents)} vähemmän kuin maksoit{n > 1 ? `, ${n} kpl: ${eur((item.purchased_price_cents - item.best_price_cents) * n)}` : ""}.</p>
         )}
         <div class="actions">
           <button class="btn ghost" onClick={undo}>Palautettu / peru ostos</button>
@@ -785,6 +804,8 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
     e.preventDefault();
     const cents = parseEurInput(price);
     if (cents == null) return toast("Hinta ei ole kelvollinen luku");
+    const pieces = parseQty(qty);
+    if (pieces == null) return toast("Määrä on 1–999 kpl");
     setBusy(true);
     // The usual price before the purchase day (not just today's), incl. price history from before tracking.
     const at = new Date(`${date}T12:00:00`);
@@ -794,12 +815,13 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
       purchased_price_cents: cents,
       purchased_seller: seller.trim() || null,
       purchased_ref_cents: ref,
+      purchased_qty: pieces,
       active: false,
     }).eq("id", item.id);
     setBusy(false);
     if (error) toast(error.message);
     else {
-      toast(ref && ref > cents ? `Ostettu! Säästit ${eur(ref - cents)}.` : "Merkitty ostetuksi");
+      toast(ref && ref > cents ? `Ostettu! Säästit ${eur((ref - cents) * pieces)}.` : "Merkitty ostetuksi");
       onSaved();
     }
   };
@@ -808,17 +830,20 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
     <form class="card stack" onSubmit={save}>
       <h3>Merkitse ostetuksi</h3>
       <div class="row">
-        <label class="field"><span>Hinta (€)</span>
+        <label class="field"><span>Hinta (€/kpl)</span>
           <input inputMode="decimal" required value={price} onInput={(e) => setPrice((e.target as HTMLInputElement).value)} />
         </label>
-        <label class="field"><span>Päivä</span>
-          <input type="date" required value={date} onInput={(e) => setDate((e.target as HTMLInputElement).value)} />
+        <label class="field"><span>Kappaletta</span>
+          <input inputMode="numeric" required value={qty} onInput={(e) => setQty((e.target as HTMLInputElement).value)} />
         </label>
       </div>
+      <label class="field"><span>Päivä</span>
+        <input type="date" required value={date} onInput={(e) => setDate((e.target as HTMLInputElement).value)} />
+      </label>
       <label class="field"><span>Kauppa</span>
         <input value={seller} onInput={(e) => setSeller((e.target as HTMLInputElement).value)} />
       </label>
-      <p class="meta">Normaalit hälytykset loppuvat. Hintaa seurataan vielä {AFTER_PURCHASE_DAYS} pv, ja jos se laskee alle ostohinnan, saat ilmoituksen. Säästö lasketaan tuotteen tavalliseen hintaan{item.usual_cents ? `: ${eur(item.usual_cents)}` : ""}.</p>
+      <p class="meta">Normaalit hälytykset loppuvat. Hintaa seurataan vielä {AFTER_PURCHASE_DAYS} pv, ja jos se laskee alle ostohinnan, saat ilmoituksen. Säästö lasketaan tuotteen tavalliseen hintaan{item.usual_cents ? `: ${eur(item.usual_cents)}` : ""} kertaa kappalemäärä.</p>
       <div class="actions">
         <button class="btn primary" disabled={busy}>Tallenna</button>
         <button type="button" class="btn ghost" onClick={() => setOpen(false)}>Peru</button>

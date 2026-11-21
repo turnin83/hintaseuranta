@@ -182,8 +182,10 @@ Poikkeus: kampanjan aikana *Alle tavoitehinnan* ja *Uusi alin hinta* pushataan h
 
 ## Ostettu ja säästö
 
-Tuotesivu → **Merkitse ostetuksi** (hinta, kauppa, päivä): seuranta ja hälytykset loppuvat (`active = false`),
-historia säilyy. Säästö = tuotteen tavallinen hinta ostohetkellä − ostohinta. Toivelistan
+Tuotesivu → **Merkitse ostetuksi** (kappalehinta, kappaletta, päivä, kauppa): seuranta ja hälytykset loppuvat
+(`active = false`), historia säilyy. Säästö = (tuotteen tavallinen hinta ostohetkellä − kappalehinta) × kappaletta,
+ja ostokset yhteensä = kappalehinta × kappaletta. Määrää voi muuttaa jälkikäteen ostetun kortista
+(*Muokkaa määrää tai tavallista hintaa*); vanhat ostot ovat 1 kpl. Toivelistan
 lopussa *Ostetut (n) · säästit X €*. *Peru ostos* palauttaa seurannan.
 
 ## Ostokset ja roskakori

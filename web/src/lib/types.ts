@@ -11,9 +11,11 @@ export type WishSummary = {
   rules: unknown;
   created_at: string;
   purchased_at: string | null;
-  purchased_price_cents: number | null;
+  purchased_price_cents: number | null; // per piece
   purchased_seller: string | null;
-  purchased_ref_cents: number | null; // usual (30 d median) price when bought
+  purchased_ref_cents: number | null; // usual price per piece when bought
+  /** pieces bought; purchased_price_cents is per piece */
+  purchased_qty?: number;
   best_seller: string | null;
   best_price_cents: number | null;
   best_shipping_cents: number | null;
