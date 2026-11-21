@@ -19,3 +19,10 @@ test("older purchases without a quantity count as one piece", () => {
 test("unknown usual price: no savings", () => {
   assert.equal(savingsOf({ purchased_price_cents: 4990, purchased_ref_cents: null, purchased_qty: 2 }), null);
 });
+
+test("the log total counts every purchase, an overpriced one as zero", async () => {
+  const { totalSaved } = await import("../web/src/lib/purchases.ts");
+  const row = (price_cents: number, ref_cents: number | null, qty: number) =>
+    ({ id: 1, wish_item_id: "i", purchased_at: "", price_cents, qty, seller: null, ref_cents });
+  assert.equal(totalSaved([row(4990, 6990, 2), row(5990, 6990, 1), row(7990, 6990, 1), row(4990, null, 1)]), 5000);
+});

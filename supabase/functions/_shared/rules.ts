@@ -334,6 +334,11 @@ export function describeClaim(v: ClaimVerdict): string {
 /** Days a purchased item is still watched for a price drop (return right / price guarantee). */
 export const AFTER_PURCHASE_DAYS = 30;
 
+/** Still within the days after a purchase when a lower price is worth an alert. Later the item is only fetched daily. */
+export function inAfterPurchaseWindow(purchasedAt: string, nowMs: number): boolean {
+  return nowMs - Date.parse(purchasedAt) < AFTER_PURCHASE_DAYS * 86_400_000;
+}
+
 /**
  * Purchased item: alert when the best current price is clearly below what was paid
  * (at least 2 % and 1 €, so cent-level noise does not trigger it).

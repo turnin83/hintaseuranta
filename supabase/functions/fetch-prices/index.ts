@@ -27,6 +27,7 @@ import {
   describeClaim,
   eur,
   evaluateAfterPurchase,
+  inAfterPurchaseWindow,
   evaluateItemRules,
   evaluateSeriesRules,
   type EventDraft,
@@ -691,6 +692,8 @@ async function evaluateItem(
   const atBest = { seller: best.seller_name, link: best.product_link_id, series: best.seller };
 
   if (item.purchased_at) {
+    // After the return window the price is only recorded (for buying again), no alerts.
+    if (!inAfterPurchaseWindow(item.purchased_at, Date.now())) return;
     const c = evaluateAfterPurchase(best.price_cents, item.purchased_price_cents);
     if (!c) return;
     const prev = await lastReason(admin, item.id, "price_after_purchase");

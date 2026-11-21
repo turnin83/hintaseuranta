@@ -7,6 +7,7 @@ import {
   describeClaim,
   diffRules,
   evaluateAfterPurchase,
+  inAfterPurchaseWindow,
   evaluateItemRules,
   evaluateSeriesRules,
   type ItemAlertState,
@@ -218,6 +219,12 @@ test("cooldown (shop rules): again only if cheaper or the cooldown passed", () =
   assert.equal(passesCooldown(cand, { priceCents: 900, ts: now - 3_600_000 }, now, 24), false);
   assert.equal(passesCooldown(cand, { priceCents: 950, ts: now - 3_600_000 }, now, 24), true);
   assert.equal(passesCooldown(cand, { priceCents: 900, ts: now - 25 * 3_600_000 }, now, 24), true);
+});
+
+test("after-purchase alerts only during the 30 days", () => {
+  const now = Date.parse("2026-11-21T12:00:00Z");
+  assert.equal(inAfterPurchaseWindow("2026-11-01T12:00:00Z", now), true);
+  assert.equal(inAfterPurchaseWindow("2026-10-22T11:00:00Z", now), false);
 });
 
 test("price drop after purchase: clear drop only", () => {

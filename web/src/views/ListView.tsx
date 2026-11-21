@@ -3,7 +3,8 @@ import { allRows, supabase } from "../lib/supabase.ts";
 import type { Shop, WishSummary } from "../lib/types.ts";
 import { AVAILABILITY, ago, eur, pctDelta, signedPct } from "../lib/format.ts";
 import { asShopItem, compareOther, indexShops, type ShopOffer, type ShopSeriesRow } from "../lib/shop-view.ts";
-import { qtyPrefix, savingsOf } from "../lib/purchases.ts";
+import { qtyPrefix, savingsOf, totalSaved } from "../lib/purchases.ts";
+import { loadPurchases } from "../lib/purchase-log.ts";
 import { assessDeal, type DealAssessment, TIERS } from "../lib/deals.ts";
 import { countTags, hasTag } from "../lib/tags.ts";
 import { dataVersion, session } from "../lib/store.ts";
@@ -45,6 +46,7 @@ export function ListView() {
   const [items, setItems] = useState<WishSummary[] | null>(null);
   const [showInactive, setShowInactive] = useState(false);
   const [showPurchased, setShowPurchased] = useState(false);
+  const [savedTotal, setSavedTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = usePref<Mode>("list-mode", "list");
   const [tag, setTag] = usePref<string>("list-tag", "");
@@ -70,6 +72,8 @@ export function ListView() {
     // fetch, which already stored the price history.
     supabase.from("product_links").select("wish_item_id, shops!inner(domain)").eq("shops.domain", "hintaopas.fi")
       .then(({ data }) => setWithHintaopas(new Set((data ?? []).map((l) => l.wish_item_id as string))));
+    // All purchases count, also those of items put back on the wish list to buy again.
+    loadPurchases().then((rows) => setSavedTotal(totalSaved(rows)));
     supabase.from("v_item_trend").select("wish_item_id, mins").then(({ data }) => {
       setTrend(new Map(((data ?? []) as { wish_item_id: string; mins: number[] }[]).map((r) => [r.wish_item_id, r.mins])));
     });
@@ -128,7 +132,6 @@ export function ListView() {
   const inactiveCount = (items ?? []).filter((i) => !i.active && !i.purchased_at).length;
   const purchased = (items ?? []).filter((i) => i.purchased_at)
     .sort((a, b) => (b.purchased_at ?? "").localeCompare(a.purchased_at ?? ""));
-  const savedTotal = purchased.reduce((n, i) => n + Math.max(0, savingsOf(i) ?? 0), 0);
   const lastFetch = (items ?? []).map((i) => i.last_fetched_at).filter(Boolean).sort().at(-1) ?? null;
   const hasTags = tagCounts.length > 0;
   const showSearch = (items?.length ?? 0) > 6;

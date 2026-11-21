@@ -186,20 +186,26 @@ Tuotesivu → **Merkitse ostetuksi** (kappalehinta, kappaletta, päivä, kauppa)
 (`active = false`), historia säilyy. Säästö = (tuotteen tavallinen hinta ostohetkellä − kappalehinta) × kappaletta,
 ja ostokset yhteensä = kappalehinta × kappaletta. Määrää voi muuttaa jälkikäteen ostetun kortista
 (*Muokkaa määrää tai tavallista hintaa*); vanhat ostot ovat 1 kpl. Toivelistan
-lopussa *Ostetut (n) · säästit X €*. *Peru ostos* palauttaa seurannan.
+lopussa *Ostetut (n) · säästit X €* (kaikki ostot, myös uudelleen seurantaan palautettujen).
+Ostot tallentuvat tauluun `purchases` (`mark_purchased`, `update_purchase`, `reopen_item`), joten samalla
+tuotteella voi olla useita ostoja.
 
 ## Ostokset ja roskakori
 
-- **Ostetut säilyvät** pysyvästi (hintoja ei haeta 30 päivän jälkeen). Asetukset → **Ostokset**: säästöt
-  yhteensä ja kampanjoittain sekä lista ostetuista. Ostetun voi siivota pois tuotteen sivulta (*Poista ostoksista*).
-- *Palautettu / peru ostos* palauttaa tuotteen seurantaan historioineen (esim. tuote palautettiin kauppaan).
+- **Ostetut säilyvät** pysyvästi. Hinta haetaan 30 päivän jälkeen kerran vuorokaudessa (ei hälytyksiä), jotta
+  hintahistoria jatkuu uutta ostoa varten. Asetukset → **Ostokset**: säästöt yhteensä ja kampanjoittain sekä
+  lista ostoista. Ostetun voi siivota pois tuotteen sivulta (*Poista ostoksista*).
+- *Seuraa uudelleen* palauttaa ostetun toivelistalle normaaliin seurantaan ja hälytyksiin (haluat ostaa lisää
+  tai uudestaan). Ostos ja sen säästö jäävät ostoksiin, ja tuotteen sivu näyttää aiemmat ostot.
+- *Palautettu / peru ostos* palauttaa tuotteen seurantaan historioineen ja poistaa ostoksen säästöistä
+  (esim. tuote palautettiin kauppaan).
 - **Roskakori**: *Poista* siirtää tuotteen roskakoriin (`wish_items.deleted_at`), ilmoituksessa on *Kumoa*.
   Asetukset → **Poistetut**: palauta tai poista pysyvästi. Ajastettu `purge-trash` poistaa yli 30 päivää
   roskakorissa olleet lopullisesti. Roskakorissa olevia ei haeta eikä niistä hälytetä.
 
 ## Hinta laski ostoksen jälkeen
 
-Ostettua tuotetta haetaan vielä 30 päivää hiljaa. Muita hälytyksiä ei tule, mutta jos paras hinta laskee
+Ostettua tuotetta haetaan vielä 30 päivää normaalisti (sen jälkeen kerran vuorokaudessa ilman hälytyksiä). Muita hälytyksiä ei tule, mutta jos paras hinta laskee
 selvästi ostohintaa alemmaksi (vähintään 2 % ja 1 €), tulee ilmoitus palautusoikeuden tai hintatakuun
 käyttämistä varten (toisto aikaisintaan 72 h välein tai kun hinta laskee lisää).
 

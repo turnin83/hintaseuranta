@@ -9,9 +9,9 @@ import { IconAlert, IconShare, IconTrash } from "../components/icons.tsx";
 import { versionLabel } from "../lib/version.ts";
 import { type Campaign, fiDate, intervalLabel, isRunning, refreshCampaigns, runningCampaign, today } from "../lib/campaigns.ts";
 import { restoreItem, TRASH_DAYS } from "../lib/trash.ts";
-import type { WishSummary } from "../lib/types.ts";
 import { eur } from "../lib/format.ts";
-import { qtyPrefix, savingsOf, spentOf } from "../lib/purchases.ts";
+import { asBought, qtyPrefix, savingsOf, spentOf } from "../lib/purchases.ts";
+import { type LoggedPurchase, loadPurchases } from "../lib/purchase-log.ts";
 import { RulesForm, rulesSummary } from "../components/RulesForm.tsx";
 import { DEFAULT_RULES, diffRules, mergeRules, type Rules } from "@shared/rules.ts";
 
@@ -542,21 +542,20 @@ function localDay(iso: string): string {
 }
 
 function PurchasesSection() {
-  const [items, setItems] = useState<WishSummary[]>([]);
+  const [items, setItems] = useState<LoggedPurchase[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   useEffect(() => {
-    supabase.from("v_wish_summary").select("*").not("purchased_at", "is", null).order("purchased_at", { ascending: false })
-      .then(({ data }) => setItems((data ?? []) as WishSummary[]));
+    loadPurchases().then(setItems);
     supabase.from("campaigns").select("*").order("starts_on").then(({ data }) => setCampaigns((data ?? []) as Campaign[]));
   }, [dataVersion.value]);
   if (items.length === 0) return null;
 
-  const saved = (i: WishSummary) => Math.max(0, savingsOf(i) ?? 0);
+  const saved = (i: LoggedPurchase) => Math.max(0, savingsOf(asBought(i)) ?? 0);
   const total = items.reduce((n, i) => n + saved(i), 0);
-  const spent = items.reduce((n, i) => n + spentOf(i), 0);
+  const spent = items.reduce((n, i) => n + spentOf(asBought(i)), 0);
   const byCampaign = campaigns
     .map((c) => {
-      const inIt = items.filter((i) => { const d = localDay(i.purchased_at!); return c.starts_on <= d && d <= c.ends_on; });
+      const inIt = items.filter((i) => { const d = localDay(i.purchased_at); return c.starts_on <= d && d <= c.ends_on; });
       return { c, count: inIt.length, saved: inIt.reduce((n, i) => n + saved(i), 0) };
     })
     .filter((x) => x.count > 0);
@@ -582,20 +581,22 @@ function PurchasesSection() {
         <summary>Ostetut tuotteet<span class="summary-meta">{items.length}</span></summary>
         <div class="rows">
           {items.map((i) => (
-            <a class="row-item" href={`#/item/${i.id}`} key={i.id}>
+            <a class="row-item" href={`#/item/${i.wish_item_id}`} key={i.id}>
               <span class="row-dot" aria-hidden="true" />
               <span class="row-main">
                 <span class="row-name">{i.name}</span>
                 <span class="row-sub">
-                  <span class="row-price num">{qtyPrefix(i)}{eur(i.purchased_price_cents!)}</span>
+                  <span class="row-price num">{qtyPrefix(asBought(i))}{eur(i.price_cents)}</span>
                   {saved(i) > 0 && <span class="row-delta down num">säästö {eur(saved(i))}</span>}
-                  <span class="row-seller">{i.purchased_seller ?? ""} · {new Date(i.purchased_at!).toLocaleDateString("fi-FI")}</span>
+                  <span class="row-seller">
+                    {i.seller ?? ""} · {new Date(i.purchased_at).toLocaleDateString("fi-FI")}{i.open ? "" : " · taas toivelistalla"}
+                  </span>
                 </span>
               </span>
             </a>
           ))}
         </div>
-        <p class="meta">Ostetun voi siivota pois tuotteen sivulta (Poista ostoksista). Se siirtyy roskakoriin.</p>
+        <p class="meta">Tuotteen sivulla: Seuraa uudelleen palauttaa sen toivelistalle (ostos säilyy tässä), Poista ostoksista siirtää sen roskakoriin.</p>
       </details>
     </section>
   );

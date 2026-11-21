@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { invoke, supabase } from "../lib/supabase.ts";
 import type { AlertEvent, ProductLink, Series, WishSummary } from "../lib/types.ts";
 import { AVAILABILITY, PRIORITY, ago, centsToInput, eur, hostOf, parseEurInput } from "../lib/format.ts";
-import { qtyOf, qtyPrefix, savingsOf, spentOf } from "../lib/purchases.ts";
+import { asBought, type PurchaseRow, qtyOf, qtyPrefix, savingsOf, spentOf } from "../lib/purchases.ts";
 import { go } from "../lib/router.ts";
 import { dataVersion, refreshUnread, toast } from "../lib/store.ts";
 import { TopBar } from "../components/chrome.tsx";
@@ -700,10 +700,29 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
   const [level, setLevel] = useState<PriceLevel | null>(null);
   const [editRef, setEditRef] = useState<string | null>(null);
   const [editQty, setEditQty] = useState("1");
+  const [earlier, setEarlier] = useState<PurchaseRow[]>([]);
 
   useEffect(() => {
     if (item.purchased_at) priceLevelBefore(item.id, item.purchased_at).then(setLevel);
+    supabase.from("purchases").select("*").eq("wish_item_id", item.id).order("purchased_at", { ascending: false })
+      .then(({ data }) => setEarlier(((data ?? []) as PurchaseRow[]).filter((r) => !item.purchased_at || Date.parse(r.purchased_at) !== Date.parse(item.purchased_at))));
   }, [item.id, item.purchased_at]);
+
+  // Purchases made before the item went back on the wish list (bought again later).
+  const earlierList = earlier.length > 0 && (
+    <div class="stack-sm">
+      <p class="meta">Ostettu aiemmin:</p>
+      {earlier.map((r) => {
+        const s = savingsOf(asBought(r));
+        return (
+          <p class="meta num" key={r.id}>
+            {new Date(r.purchased_at).toLocaleDateString("fi-FI")}: {qtyPrefix(asBought(r))}{eur(r.price_cents)}
+            {r.seller ? `, ${r.seller}` : ""}{s != null && s > 0 ? ` · säästö ${eur(s)}` : ""}
+          </p>
+        );
+      })}
+    </div>
+  );
 
   if (item.purchased_at) {
     const n = qtyOf(item);
@@ -716,20 +735,21 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
       if (editRef?.trim() && cents == null) return toast("Hinta ei ole kelvollinen luku");
       const pieces = parseQty(editQty);
       if (pieces == null) return toast("Määrä on 1–999 kpl");
-      const { error } = await supabase.from("wish_items").update({ purchased_ref_cents: cents, purchased_qty: pieces }).eq("id", item.id);
+      const { error } = await supabase.rpc("update_purchase", { p_item: item.id, p_qty: pieces, p_ref: cents });
       if (error) return toast(error.message);
       setEditRef(null);
       toast("Ostos tallennettu");
       onSaved();
     };
     const watchDays = Math.max(0, AFTER_PURCHASE_DAYS - Math.floor((Date.now() - Date.parse(item.purchased_at)) / 86_400_000));
-    const undo = async () => {
-      if (!confirm("Perutaanko ostomerkintä (esim. tuote palautettiin)? Seuranta ja hälytykset jatkuvat, historia säilyy.")) return;
-      const { error } = await supabase.from("wish_items").update({
-        purchased_at: null, purchased_price_cents: null, purchased_seller: null, purchased_ref_cents: null, purchased_qty: 1, active: true,
-      }).eq("id", item.id);
+    const reopen = async (keep: boolean) => {
+      const ask = keep
+        ? "Palautetaanko tuote toivelistalle ostettavaksi uudelleen? Tämä ostos ja sen säästö säilyvät ostoksissa, ja hälytykset alkavat taas."
+        : "Perutaanko ostomerkintä (esim. tuote palautettiin)? Ostos poistuu ostoksista ja säästöistä. Seuranta ja hälytykset jatkuvat, historia säilyy.";
+      if (!confirm(ask)) return;
+      const { error } = await supabase.rpc("reopen_item", { p_item: item.id, p_keep: keep });
       if (error) toast(error.message);
-      else { toast("Seuranta jatkuu"); onSaved(); }
+      else { toast(keep ? "Taas toivelistalla" : "Ostos peruttu, seuranta jatkuu"); onSaved(); }
     };
     return (
       <div class="card purchased stack-sm">
@@ -783,13 +803,20 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
         {watchDays > 0 ? (
           <p class="meta">Hintaa seurataan vielä {watchDays} pv. Jos se laskee alle ostohinnan, saat ilmoituksen (palautusoikeus tai hintatakuu).</p>
         ) : (
-          <p class="meta">Hintoja ei enää haeta eikä hälytyksiä tule. Historia säilyy.</p>
+          <p class="meta">
+            Hinta haetaan kerran päivässä, jotta näet sen, jos haluat ostaa uudelleen. Hälytyksiä ei tule.
+            {item.best_price_cents != null && item.purchased_price_cents != null && item.best_price_cents >= item.purchased_price_cents
+              ? ` Paras hinta nyt ${eur(item.best_price_cents)} (${item.best_seller}).`
+              : ""}
+          </p>
         )}
         {item.best_price_cents != null && item.purchased_price_cents != null && item.best_price_cents < item.purchased_price_cents && (
           <p class="reco reco-buy"><strong>Hinta on nyt {eur(item.best_price_cents)}</strong> ({item.best_seller}), {eur(item.purchased_price_cents - item.best_price_cents)} vähemmän kuin maksoit{n > 1 ? `, ${n} kpl: ${eur((item.purchased_price_cents - item.best_price_cents) * n)}` : ""}.</p>
         )}
+        {earlierList}
         <div class="actions">
-          <button class="btn ghost" onClick={undo}>Palautettu / peru ostos</button>
+          <button class="btn" onClick={() => reopen(true)}>Seuraa uudelleen</button>
+          <button class="btn ghost" onClick={() => reopen(false)}>Palautettu / peru ostos</button>
           <button class="btn ghost danger" onClick={async () => { if (await moveToTrash(item.id, item.name)) go("#/"); }}>Poista ostoksista</button>
         </div>
       </div>
@@ -797,7 +824,12 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
   }
 
   if (!open) {
-    return <button class="btn" style="align-self:flex-start" onClick={() => setOpen(true)}>Merkitse ostetuksi</button>;
+    return (
+      <div class="stack-sm">
+        {earlierList}
+        <button class="btn" style="align-self:flex-start" onClick={() => setOpen(true)}>Merkitse ostetuksi</button>
+      </div>
+    );
   }
 
   const save = async (e: Event) => {
@@ -810,14 +842,14 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
     // The usual price before the purchase day (not just today's), incl. price history from before tracking.
     const at = new Date(`${date}T12:00:00`);
     const ref = (await priceLevelBefore(item.id, at.toISOString()))?.usual_cents ?? item.usual_cents;
-    const { error } = await supabase.from("wish_items").update({
-      purchased_at: at.toISOString(),
-      purchased_price_cents: cents,
-      purchased_seller: seller.trim() || null,
-      purchased_ref_cents: ref,
-      purchased_qty: pieces,
-      active: false,
-    }).eq("id", item.id);
+    const { error } = await supabase.rpc("mark_purchased", {
+      p_item: item.id,
+      p_at: at.toISOString(),
+      p_price: cents,
+      p_qty: pieces,
+      p_seller: seller.trim() || null,
+      p_ref: ref,
+    });
     setBusy(false);
     if (error) toast(error.message);
     else {
@@ -843,7 +875,7 @@ function PurchasePanel({ item, onSaved }: { item: WishSummary; onSaved: () => vo
       <label class="field"><span>Kauppa</span>
         <input value={seller} onInput={(e) => setSeller((e.target as HTMLInputElement).value)} />
       </label>
-      <p class="meta">Normaalit hälytykset loppuvat. Hintaa seurataan vielä {AFTER_PURCHASE_DAYS} pv, ja jos se laskee alle ostohinnan, saat ilmoituksen. Säästö lasketaan tuotteen tavalliseen hintaan{item.usual_cents ? `: ${eur(item.usual_cents)}` : ""} kertaa kappalemäärä.</p>
+      <p class="meta">Normaalit hälytykset loppuvat. Hintaa seurataan vielä {AFTER_PURCHASE_DAYS} pv, ja jos se laskee alle ostohinnan, saat ilmoituksen. Sen jälkeen hinta haetaan kerran päivässä, ja tuotteen voi palauttaa toivelistalle (Seuraa uudelleen). Säästö lasketaan tuotteen tavalliseen hintaan{item.usual_cents ? `: ${eur(item.usual_cents)}` : ""} kertaa kappalemäärä.</p>
       <div class="actions">
         <button class="btn primary" disabled={busy}>Tallenna</button>
         <button type="button" class="btn ghost" onClick={() => setOpen(false)}>Peru</button>
