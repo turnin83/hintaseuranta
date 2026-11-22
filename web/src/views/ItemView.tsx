@@ -15,6 +15,8 @@ import { assessDeal, priceMismatch } from "../lib/deals.ts";
 import { moveToTrash } from "../lib/trash.ts";
 import { sellerKey, sellerMatchesShop } from "@shared/search.ts";
 import { AlertEntry } from "../components/AlertEntry.tsx";
+import { linkMismatches } from "../lib/same-product.ts";
+import { addSkipped, readSkipped } from "../lib/skips.ts";
 import type { Shop } from "../lib/types.ts";
 import { AFTER_PURCHASE_DAYS, claimCheck, describeClaim, diffRules, mergeRules, type Rules } from "@shared/rules.ts";
 import { RulesForm, rulesSummary } from "../components/RulesForm.tsx";
@@ -132,6 +134,13 @@ export function ItemView({ id }: { id: string }) {
   if (!item) return <div class="page"><TopBar title="" parent="#/" /><div class="skeleton" /></div>;
 
   const eans = [...new Set(links.map((l) => l.ean).filter(Boolean))];
+  // Links that look like another product (size, capacity, colour, EAN); "Sama tuote" dismisses one.
+  const skipped = readSkipped();
+  const wrongLinks = new Map([...linkMismatches(item.name, links)].filter(([lid]) => !skipped.has(`same|${lid}`)));
+  const wrongText = [...wrongLinks].map(([lid, why]) => {
+    const l = links.find((x) => x.id === lid);
+    return `${l?.shops?.name ?? (l ? hostOf(l.url) : "")}: ${why.join(", ")}`;
+  });
   const activeLinks = links.filter((l) => l.active);
   const deal = assessDeal(item, series.reduce((n, s) => n + s.obs_count, 0));
   const failingLinks = activeLinks.filter((l) => l.last_status && l.last_status !== "ok").length;
@@ -218,6 +227,15 @@ export function ItemView({ id }: { id: string }) {
               {deal.warnings.map((w) => (
                 <p class="claim-warn" key={w}><IconAlert width={16} height={16} /><span>{w}</span></p>
               ))}
+              {wrongLinks.size > 0 && (
+                <p class="claim-warn">
+                  <IconAlert width={16} height={16} />
+                  <span>
+                    Linkki voi olla eri tuote ({wrongText.join("; ")}). Sen hinnat ovat mukana alimmassa ja tavallisessa
+                    hinnassa. Tarkista Linkit-kohdasta.
+                  </span>
+                </p>
+              )}
             </>
           ) : (
             <span class="muted">{links.length ? "Ei hintatietoa vielä." : "Lisää ensimmäinen linkki, niin hinnan seuranta alkaa."}</span>
@@ -316,6 +334,12 @@ export function ItemView({ id }: { id: string }) {
                       <p class="claim-warn"><IconAlert width={16} height={16} /><span>{describeClaim(claim)}</span></p>
                     )}
                     {claim?.kind === "ok" && <span class="meta">{describeClaim(claim)}</span>}
+                    {wrongLinks.has(s.product_link_id) && (
+                      <p class="claim-warn">
+                        <IconAlert width={16} height={16} />
+                        <span>Eri tuote? {wrongLinks.get(s.product_link_id)!.join(", ")}</span>
+                      </p>
+                    )}
                     {mismatch && (
                       <p class="claim-warn">
                         <IconAlert width={16} height={16} />
@@ -384,15 +408,15 @@ export function ItemView({ id }: { id: string }) {
       <div>
         <EditPanel item={item} onSaved={reload} />
         <RulesPanel item={item} onSaved={reload} />
-        <details class="panel" open={links.length === 0}>
+        <details class="panel" open={links.length === 0 || wrongLinks.size > 0}>
           <summary>
             Linkit
             <span class="summary-meta">
-              {activeLinks.length}{failingLinks > 0 ? ` · ${failingLinks} ongelma` : ""}{eans.length > 1 ? " · eri EAN" : ""}
+              {activeLinks.length}{failingLinks > 0 ? ` · ${failingLinks} ongelma` : ""}{wrongLinks.size > 0 ? ` · ${wrongLinks.size} eri tuote?` : eans.length > 1 ? " · eri EAN" : ""}
             </span>
           </summary>
           <div class="stack">
-            {eans.length > 1 && (
+            {eans.length > 1 && wrongLinks.size === 0 && (
               <div class="notice warn">
                 <strong>Linkeillä on eri EAN-koodit</strong> ({eans.join(", ")}). Tarkista, että kaikki linkit ovat samaa mallia.
               </div>
@@ -402,7 +426,7 @@ export function ItemView({ id }: { id: string }) {
             </div>
             {links.length === 0 && <p class="muted">Ei linkkejä.</p>}
             <div>
-              {links.map((l) => <LinkRow key={l.id} link={l} onChange={reload} />)}
+              {links.map((l) => <LinkRow key={l.id} link={l} why={wrongLinks.get(l.id)} onChange={reload} />)}
             </div>
             {links.length > 0 && <FindOffers itemId={id} itemEans={eans as string[]} onAdded={reload} />}
           </div>
@@ -419,7 +443,7 @@ const STATUS: Record<string, [string, string]> = {
   no_data: ["warn", "Ei hintaa"],
 };
 
-function LinkRow({ link: l, onChange }: { link: ProductLink; onChange: () => void }) {
+function LinkRow({ link: l, why, onChange }: { link: ProductLink; why?: string[]; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
   const [sellers, setSellers] = useState((l.sellers ?? []).join(", "));
   const isAggregator = l.shops?.strategy === "aggregator";
@@ -449,6 +473,17 @@ function LinkRow({ link: l, onChange }: { link: ProductLink; onChange: () => voi
         Haettu {ago(l.last_fetched_at)}{l.ean ? ` · EAN ${l.ean}` : ""}{l.active ? "" : " · pois käytöstä"}
       </p>
       {l.last_error && l.last_status !== "ok" && <p class="meta">{l.last_error}</p>}
+      {why && (
+        <div class="notice warn stack-sm">
+          <span>
+            <strong>Eri tuote?</strong> {why.join(", ")}. Väärän tuotteen hinnat vääristävät alinta ja tavallista hintaa:
+            poista linkki (hinnat poistuvat sen mukana), tai kuittaa, jos tuote on sama.
+          </span>
+          <div class="actions">
+            <button class="btn small ghost" onClick={() => { addSkipped(`same|${l.id}`); onChange(); }}>Sama tuote</button>
+          </div>
+        </div>
+      )}
       {isAggregator && (
         <p class="meta">
           Yksi haku tältä sivulta tallentaa {l.sellers?.length ? `${l.sellers.length} kaupan hinnat: ${l.sellers.join(", ")}` : "kaikkien sivulla olevien kauppojen hinnat"}.

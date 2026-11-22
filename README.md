@@ -223,6 +223,10 @@ käyttämistä varten (toisto aikaisintaan 72 h välein tai kun hinta laskee lis
   heti uudestaan (`confirmDrops`). Sama hinta → tallennetaan; tavallinen hinta → tallennetaan se (kertaluontoinen
   lukuvirhe); muuten pudotusta ei tallenneta ja linkki haetaan uudelleen seuraavalla 15 min tickillä
   (enintään 3 kertaa, sitten hinta tallennetaan sellaisenaan).
+- **Hidas kauppa**: jos kaupan sivu ei vastaa 20 sekunnissa, kaupan muut linkit jäävät seuraavalle 15 minuutin
+  kierrokselle (Black Week -yönä 21.–22.11. Datatronic aikakatkaisi kuusi kertaa peräkkäin ja ajo venyi 138 sekuntiin,
+  kun raja on 150 s). Aikabudjetin lopussa aloitettu haku saa enintään 10 s yli budjetin, joten ajo ehtii päättyä ja
+  lähettää ilmoitukset.
 - **Ristiintarkistus**: kun vertailusivu (hinta.fi, hintaopas.fi) näyttää hinnan kaupalle, jota seurataan myös
   suoraan, se tallennetaan suoran linkin `xcheck`-kenttään (vertailusivun riviä ei tallenneta hintahistoriaan).
   Tuotesivu näyttää huomautuksen, jos hinnat eroavat yli 5 % (ja vähintään 1 €) ja lukemat ovat enintään
@@ -230,7 +234,23 @@ käyttämistä varten (toisto aikaisintaan 72 h välein tai kun hinta laskee lis
 
 ## Linkkien korjaus
 
-Asetukset → *Linkkien korjaus* (`#/links`) listaa (1) kaupat, joiden hinta tulee vain vertailusivulta ja jotka ovat
+Asetukset → *Linkkien korjaus* (`#/links`) listaa ensin mahdolliset sekaannukset (`web/src/lib/same-product.ts`):
+
+- **Sama tuote kahdesti**: kaksi toiveasiaa, joilla on sama kauppasivu (osoite ilman www:tä, kauttaviivaa ja
+  seurantaparametreja), sama EAN (kummankin linkkien yleisin kelvollinen koodi) tai sama nimi. *Yhdistä, valittu jää*
+  (`merge_items`): toisen linkit, hintahistoria, hälytykset ja ostot siirtyvät valittuun ja toinen poistuu. Sama sivu
+  molemmilla yhdistyy yhdeksi linkiksi, ja siitä siirtyvät vain ajalta ennen säilyvän linkin ensimmäistä lukemaa olevat
+  hinnat (ei tuplia). Säilyvän tavoite, säännöt ja nimi voittavat; puuttuvat tulevat toiselta, tagit yhdistyvät.
+- **Linkki eri tuotteeseen?**: linkin sivun nimi kertoo eri koon (`65"` vs `75"`), kapasiteetin (GB/TB), tilavuuden,
+  pakkauskoon (kpl) tai värin kuin tuotteen nimi (tai, jos nimi ei kerro, kuin enemmistö linkeistä), tai sen EAN on
+  vähemmistössä. Tasatilanteessa (1 vs 1) ei arvata. Väärän linkin hinnat lasketaan tuotteen alimpaan ja tavalliseen
+  hintaan ja hälytyksiin (myös pois käytöstä olevan), joten *Poista* poistaa linkin hintoineen; *Poista ja etsi oikea*
+  avaa lisäksi haun kaupan sivuilta. *Sama tuote* kuittaa varoituksen. Tuotesivu näyttää saman varoituksen hinnan alla,
+  kaupan rivillä ja Linkit-kohdassa.
+- **Lisäysnäkymä** varoittaa, jos uusi tuote on jo listalla (sama sivu tai EAN: *Lisää siihen* / *Avaa se*), ja jos
+  olemassa olevaan lisättävä sivu näyttää eri tuotteelta.
+
+Sen jälkeen (1) kaupat, joiden hinta tulee vain vertailusivulta ja jotka ovat
 olleet 30 päivän aikana enintään 5 % halvinta kalliimpia, kaupoittain ryhmiteltynä, ja (2) linkit, jotka eivät ole
 antaneet hintaa vuorokauteen. *Etsi* kopioi tuotteen nimen leikepöydälle, avaa Google-haun kaupan sivuilta
 (`site:<domain>`) ja siirtää lisäysnäkymään, joka lukee kopioidun linkin palatessa ja palaa tallennuksen jälkeen

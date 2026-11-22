@@ -17,8 +17,9 @@ import {
   markSuggestHintaFi,
   removeShopFromComparisonLinks,
 } from "../lib/direct-links.ts";
+import { candidateMismatch, gtin, type LinkLike, productUrlKey } from "../lib/same-product.ts";
 
-type ItemOpt = { id: string; name: string; eans: string[] };
+type ItemOpt = { id: string; name: string; links: LinkLike[] };
 
 export function AddView(props: {
   url: string | null;
@@ -52,11 +53,11 @@ export function AddView(props: {
   useEffect(() => {
     // Purchased items are not offered, except the one the user came from (e.g. adding its hintaopas link).
     const notBought = targetItem ? `purchased_at.is.null,id.eq.${targetItem}` : "purchased_at.is.null";
-    supabase.from("wish_items").select("id, name, product_links(ean)").is("deleted_at", null).or(notBought).order("name").then(({ data }) => {
-      const opts = (data ?? []).map((w: { id: string; name: string; product_links: { ean: string | null }[] }) => ({
+    supabase.from("wish_items").select("id, name, product_links(id, url, ean, model_name)").is("deleted_at", null).or(notBought).order("name").then(({ data }) => {
+      const opts = (data ?? []).map((w: { id: string; name: string; product_links: LinkLike[] }) => ({
         id: w.id,
         name: w.name,
-        eans: [...new Set((w.product_links ?? []).map((l) => l.ean).filter((e): e is string => Boolean(e)))],
+        links: w.product_links ?? [],
       }));
       setItems(opts);
       if (!itemId && opts[0]) setItemId(opts[0].id);
@@ -140,7 +141,14 @@ export function AddView(props: {
   const offer = page?.offers[0];
   const canSave = Boolean(page && page.offers.length > 0 && preview?.shop && (mode === "new" ? name.trim() : itemId));
   const chosen = items.find((i) => i.id === itemId);
-  const eanMismatch = mode === "existing" && page?.ean && chosen && chosen.eans.length > 0 && !chosen.eans.includes(page.ean);
+  // Another product than the chosen item (EAN, size, capacity, colour)?
+  const mismatch = mode === "existing" && page && chosen ? candidateMismatch(chosen.name, chosen.links, { ean: page.ean, name: page.name }) : [];
+  // A new item for a product that is already on the list (the same page, or the same EAN)?
+  const pageKey = preview ? productUrlKey(preview.url) : null;
+  const pageCode = gtin(page?.ean);
+  const samePageAs = mode === "new" && page ? items.find((i) => i.links.some((l) => productUrlKey(l.url) === pageKey)) : undefined;
+  const sameAs = samePageAs ??
+    (mode === "new" && pageCode ? items.find((i) => i.links.some((l) => gtin(l.ean) === pageCode)) : undefined);
 
   const save = async (e: Event) => {
     e.preventDefault();
@@ -344,6 +352,20 @@ export function AddView(props: {
                   <button type="button" aria-pressed={mode === "existing"} onClick={() => setMode("existing")}>Olemassa olevaan</button>
                 </div>
               )}
+              {sameAs && (
+                <div class="notice warn stack-sm">
+                  <span>
+                    <strong>Tämä tuote on jo listalla:</strong> {sameAs.name}
+                    {samePageAs ? " (sama sivu on jo seurannassa)." : ` (sama EAN ${page.ean}).`} Lisää sivu siihen, niin hinnat
+                    pysyvät yhdessä.
+                  </span>
+                  <div class="actions">
+                    {samePageAs
+                      ? <a class="btn small" href={`#/item/${sameAs.id}`}>Avaa se</a>
+                      : <button type="button" class="btn small" onClick={() => { setMode("existing"); setItemId(sameAs.id); }}>Lisää siihen</button>}
+                  </div>
+                </div>
+              )}
               {mode === "new" ? (
                 <>
                   <label class="field"><span>Nimi</span>
@@ -364,9 +386,10 @@ export function AddView(props: {
                   </select>
                 </label>
               )}
-              {eanMismatch && (
+              {mismatch.length > 0 && (
                 <div class="notice warn">
-                  <strong>Eri EAN kuin muilla linkeillä</strong> ({page.ean} vs {chosen!.eans.join(", ")}). Tämä voi olla eri malli tai kokoversio.
+                  <strong>Näyttää eri tuotteelta:</strong> {mismatch.join(", ")}. Tarkista, että sivu on samaa mallia, kokoa ja
+                  väriä: väärän tuotteen hinnat vääristäisivät alinta ja tavallista hintaa.
                 </div>
               )}
               <button class="btn primary block" disabled={!canSave || saving}>{saving ? "Tallennetaan…" : "Aloita seuranta"}</button>

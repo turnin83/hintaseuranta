@@ -7,7 +7,9 @@
 //
 // Politeness: links are grouped per shop domain; one domain is fetched sequentially with the shop's
 // min_delay_ms between requests; a few domains run in parallel. A run stops starting new fetches when
-// the time budget is used up; unfinished links stay due and are picked up by the next tick.
+// the time budget is used up; unfinished links stay due and are picked up by the next tick. A shop that
+// times out (overloaded on a campaign night) is left alone for the rest of the run, and no fetch may run
+// past the budget by more than FETCH_GRACE_MS, so the run ends (and pushes) inside the 150 s wall clock.
 //
 // Alerts: shop-level reasons (drop, back in stock) are collected while links are fetched; after the
 // fetches each touched item gets its item-level reasons (below target, all-time low, below usual price)
@@ -59,6 +61,8 @@ import {
 } from "../_shared/cooldown.ts";
 
 const TIME_BUDGET_MS = 110_000; // wall clock limit on the free plan is 150 s
+const FETCH_TIMEOUT_MS = 20_000;
+const FETCH_GRACE_MS = 10_000; // a fetch started near the end of the budget gets at most this much past it
 const MAX_LINKS = 150;
 const DOMAIN_CONCURRENCY = 4;
 const HISTORY_LIMIT = 1000;
@@ -270,8 +274,16 @@ Deno.serve(async (req) => {
       if (!item) continue;
       const ctx = ctxFor(link.household_id);
       try {
-        const r = await processLink(admin, robots, link, shop, item, rulesFor(item), isMutedFor(item.household_id), ctx);
+        const r = await processLink(admin, robots, link, shop, item, rulesFor(item), isMutedFor(item.household_id), ctx, deadline);
         if (r === true) touchedItems.add(item.id);
+        if (r === "slow") {
+          // Singles Day / Black Week nights: one slow shop (Datatronic, 6 x 20 s timeouts) used up the run.
+          // Its other links wait for the next tick (15 min) instead of each waiting for a timeout.
+          const rest = queue.slice(i + 1);
+          released.push(...rest.map((l) => l.id));
+          if (rest.length) ctx.errors.push({ url: shop.domain, error: `Slow response: ${rest.length} links left to the next run` });
+          return;
+        }
         if (r === "blocked") {
           if (COOLDOWN_DOMAINS.has(shop.domain)) {
             const before = await getCooldown(admin, shop.domain);
@@ -485,9 +497,13 @@ type ReadResult =
   | { ok: true; page: PageData; offers: Offer[] }
   | { ok: false; status: "error" | "blocked" | "no_data"; error: string };
 
+/** Time a fetch may take: normally FETCH_TIMEOUT_MS, less near the end of the run's budget. */
+const fetchTimeout = (deadline: number) =>
+  Math.max(5_000, Math.min(FETCH_TIMEOUT_MS, deadline + FETCH_GRACE_MS - Date.now()));
+
 /** Reads the link's page: the offers to record (comparison page: the selected sellers; shop: its price). */
-async function readOffers(link: LinkRow, robots: RobotsCache): Promise<ReadResult> {
-  const f = await fetchPage(link.url, robots);
+async function readOffers(link: LinkRow, robots: RobotsCache, timeoutMs = FETCH_TIMEOUT_MS): Promise<ReadResult> {
+  const f = await fetchPage(link.url, robots, timeoutMs);
   if (f.blocked) return { ok: false, status: "blocked", error: `Bot protection: ${f.botMarkers.join(", ")}` };
   if (f.error) return { ok: false, status: "error", error: f.error };
 
@@ -537,8 +553,8 @@ async function backfillHistory(admin: SupabaseClient, link: LinkRow, points: Pri
 }
 
 /**
- * Fetches one link, stores observations and collects shop-level reasons. Returns true on success and
- * "blocked" when the shop's bot protection answered.
+ * Fetches one link, stores observations and collects shop-level reasons. Returns true on success,
+ * "blocked" when the shop's bot protection answered and "slow" when the shop did not answer in time.
  */
 async function processLink(
   admin: SupabaseClient,
@@ -549,7 +565,8 @@ async function processLink(
   rules: Rules,
   isMuted: IsMuted,
   ctx: Ctx,
-): Promise<boolean | "blocked"> {
+  deadline = Date.now() + TIME_BUDGET_MS,
+): Promise<boolean | "blocked" | "slow"> {
   const now = new Date().toISOString();
   const nowMs = Date.parse(now);
   const fail = async (status: "error" | "blocked" | "no_data", error: string) => {
@@ -577,10 +594,11 @@ async function processLink(
         await insertEvent(admin, ctx, item, buildEvent([reason], { pushMinPct: rules.push_min_pct })!, [reason], link.user_id);
       }
     }
-    return status === "blocked" ? "blocked" as const : false;
+    if (status === "blocked") return "blocked" as const;
+    return /^TimeoutError/.test(error) ? "slow" as const : false;
   };
 
-  const read = await readOffers(link, robots);
+  const read = await readOffers(link, robots, fetchTimeout(deadline));
   if (!read.ok) return fail(read.status, read.error);
   const page = read.page;
   let offers = read.offers;
@@ -611,7 +629,7 @@ async function processLink(
   let unconfirmed: Offer[] = [];
   if (pendingTries < 3 && bigDrops(offers, lastCents).length) {
     await sleep(shop.min_delay_ms);
-    const again = await readOffers(link, robots);
+    const again = await readOffers(link, robots, fetchTimeout(deadline));
     ({ offers, unconfirmed } = confirmDrops(offers, lastCents, again.ok ? again.offers : null));
     if (unconfirmed.length) {
       ctx.errors.push({

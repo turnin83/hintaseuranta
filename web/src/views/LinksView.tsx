@@ -1,15 +1,18 @@
-// "Linkkien korjaus": shops seen only via comparison sites that were among the cheapest (a direct link would
-// make them reliable), and broken links. Work happens in the user's own browser: "Etsi" copies the search
+// "Linkkien korjaus": one product tracked twice (merge), links that point to another product than their item
+// (another size, capacity or colour: its prices would count as the item's), shops seen only via comparison
+// sites that were among the cheapest (a direct link would make them reliable), and broken links. Work happens in the user's own browser: "Etsi" copies the search
 // words and opens a search restricted to the shop's site; the copied product link is read back in the add
 // view, which returns here after saving.
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { allRows, supabase } from "../lib/supabase.ts";
 import type { ProductLink, Shop, WishSummary } from "../lib/types.ts";
 import { eur } from "../lib/format.ts";
+import { type DuplicatePair, findDuplicates, linkMismatches } from "../lib/same-product.ts";
 import { go } from "../lib/router.ts";
-import { dataVersion, session, toast } from "../lib/store.ts";
+import { dataVersion, toast } from "../lib/store.ts";
+import { useSkipped } from "../lib/skips.ts";
 import { TopBar } from "../components/chrome.tsx";
-import { IconExternal } from "../components/icons.tsx";
+import { IconAlert, IconExternal } from "../components/icons.tsx";
 import { setPendingDirectLink } from "../lib/direct-links.ts";
 import { sellerKey, sellerMatchesShop } from "@shared/search.ts";
 
@@ -28,24 +31,6 @@ const DAY = 86_400_000;
 /** A seller is worth a direct link when its 30-day low was at most this much above the item's. */
 const CLOSE = 1.05;
 
-function useSkipped(): [Set<string>, (key: string) => void] {
-  const storeKey = `${session.value?.user.id ?? "anon"}:links-skip`;
-  const [skipped, setSkipped] = useState<Set<string>>(() => {
-    try {
-      return new Set(JSON.parse(localStorage.getItem(storeKey) ?? "[]") as string[]);
-    } catch {
-      return new Set();
-    }
-  });
-  const skip = (key: string) => {
-    const next = new Set(skipped).add(key);
-    setSkipped(next);
-    try {
-      localStorage.setItem(storeKey, JSON.stringify([...next]));
-    } catch { /* private mode */ }
-  };
-  return [skipped, skip];
-}
 
 const searchUrl = (words: string, domain: string | null) =>
   `https://www.google.com/search?q=${encodeURIComponent(domain ? `site:${domain} ${words}` : words)}`;
@@ -86,8 +71,18 @@ export function LinksView() {
     });
   }, [version, dataVersion.value]);
 
-  const { missing, broken } = useMemo(() => {
+  const { missing, broken, dupes, wrong } = useMemo(() => {
     const byItem = new Map((items ?? []).map((i) => [i.id, i]));
+    const linksOf = (itemId: string) => links.filter((l) => l.wish_item_id === itemId);
+
+    // The same product twice on the list.
+    const dupes = findDuplicates(items ?? [], linksOf).filter((p) => !skipped.has(`dup|${p.older.id}|${p.newer.id}`));
+    // A link to another product: active or not, its history counts in the item's lowest and usual price.
+    const wrong = (items ?? []).flatMap((item) =>
+      [...linkMismatches(item.name, linksOf(item.id))]
+        .filter(([id]) => !skipped.has(`same|${id}`))
+        .map(([id, why]) => ({ item, link: links.find((l) => l.id === id)!, why }))
+    );
     const shopOf = (seller: string) => shops.find((s) => s.strategy !== "aggregator" && sellerMatchesShop(seller, s));
     const eanOf = (itemId: string) => links.find((l) => l.wish_item_id === itemId && l.ean)?.ean ?? null;
 
@@ -121,6 +116,8 @@ export function LinksView() {
     return {
       missing: [...missing.entries()].sort((a, b) => b[1].length - a[1].length).map(([shop, rows]) => ({ shop, rows, eanOf })),
       broken,
+      dupes,
+      wrong,
     };
   }, [items, links, shops, series, skipped]);
 
@@ -130,6 +127,18 @@ export function LinksView() {
     copy(words);
     setPendingDirectLink(itemId, seller);
     setTimeout(() => go(`#/add?item=${itemId}&seller=${encodeURIComponent(seller)}&back=links${extra}`), 300);
+  };
+  const removeWrong = async (l: LinkRow, item: WishSummary, thenSearch: boolean) => {
+    const shop = l.shops?.name ?? l.shops?.domain ?? "";
+    if (!confirm(`Poistetaanko ${shop}-linkki ja sen hinnat tuotteelta ${item.name}? Väärän tuotteen hinnat vääristävät alinta ja tavallista hintaa.`)) return;
+    const { error } = await supabase.from("product_links").delete().eq("id", l.id);
+    if (error) return toast(error.message);
+    dataVersion.value++;
+    if (thenSearch) startSearch(item.id, shop, item.name);
+    else {
+      toast("Linkki ja sen hinnat poistettu");
+      setVersion((v) => v + 1);
+    }
   };
   const deactivate = async (l: LinkRow) => {
     if (!confirm(`Poistetaanko ${l.shops?.name ?? l.shops?.domain} käytöstä? Hintahistoria säilyy.`)) return;
@@ -148,6 +157,53 @@ export function LinksView() {
       </p>
       {items === null ? <div class="skeleton" /> : (
         <>
+          {dupes.length > 0 && (
+            <section class="section stack-sm" aria-labelledby="h-dupes">
+              <h2 id="h-dupes">Sama tuote kahdesti <span class="summary-meta">{dupes.length}</span></h2>
+              <p class="meta">
+                Kaksi seurantaa samalle tuotteelle. Yhdistäessä valittu jää: toisen linkit, hintahistoria, hälytykset ja
+                ostot siirtyvät siihen, ja sama kauppasivu yhdistyy yhdeksi linkiksi.
+              </p>
+              <div>
+                {dupes.map((p) => (
+                  <DuplicateRow
+                    key={`${p.older.id}|${p.newer.id}`}
+                    pair={p}
+                    onMerged={() => setVersion((v) => v + 1)}
+                    onSkip={() => skip(`dup|${p.older.id}|${p.newer.id}`)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {wrong.length > 0 && (
+            <section class="section stack-sm" aria-labelledby="h-wrong">
+              <h2 id="h-wrong">Linkki eri tuotteeseen? <span class="summary-meta">{wrong.length}</span></h2>
+              <p class="meta">
+                Linkin tuote poikkeaa muista: eri koko, kapasiteetti, väri tai EAN. Sen hinnat lasketaan tuotteen alimpaan
+                ja tavalliseen hintaan sekä hälytyksiin. Poista väärä linkki hintoineen, tai merkitse se samaksi tuotteeksi.
+              </p>
+              <div>
+                {wrong.map(({ item, link: l, why }) => (
+                  <div class="link-row" key={l.id}>
+                    <strong>{item.name}</strong>
+                    <span class="meta">{l.shops?.name ?? l.shops?.domain}{l.active ? "" : " · pois käytöstä"}: {l.model_name ?? l.url}</span>
+                    <p class="claim-warn"><IconAlert width={16} height={16} /><span>{why.join(" · ")}</span></p>
+                    <div class="actions">
+                      <a class="btn small" href={l.url} target="_blank" rel="noopener noreferrer"><IconExternal /> Avaa</a>
+                      {l.shops?.strategy !== "aggregator" && (
+                        <button class="btn small primary" onClick={() => removeWrong(l, item, true)}>Poista ja etsi oikea</button>
+                      )}
+                      <button class="btn small ghost danger" onClick={() => removeWrong(l, item, false)}>Poista</button>
+                      <button class="btn small ghost" onClick={() => skip(`same|${l.id}`)}>Sama tuote</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           <section class="section stack-sm" aria-labelledby="h-missing">
             <h2 id="h-missing">Puuttuvat suorat linkit <span class="summary-meta">{missingCount}</span></h2>
             <p class="meta">
@@ -225,6 +281,48 @@ export function LinksView() {
           </section>
         </>
       )}
+    </div>
+  );
+}
+
+function DuplicateRow({ pair, onMerged, onSkip }: { pair: DuplicatePair<WishSummary>; onMerged: () => void; onSkip: () => void }) {
+  const [keepId, setKeepId] = useState(pair.older.id);
+  const [busy, setBusy] = useState(false);
+  const [keep, drop] = keepId === pair.older.id ? [pair.older, pair.newer] : [pair.newer, pair.older];
+  const merge = async () => {
+    if (!confirm(`Yhdistetäänkö "${drop.name}" tuotteeseen "${keep.name}"? Linkit, hintahistoria ja hälytykset siirtyvät, ja "${drop.name}" poistuu listalta. Tätä ei voi perua.`)) return;
+    setBusy(true);
+    const { error } = await supabase.rpc("merge_items", { p_keep: keep.id, p_drop: drop.id });
+    setBusy(false);
+    if (error) return toast(error.message);
+    toast("Yhdistetty");
+    dataVersion.value++;
+    onMerged();
+  };
+  const day = (iso: string) => new Date(iso).toLocaleDateString("fi-FI", { day: "numeric", month: "numeric" });
+  return (
+    <div class="link-row">
+      <span class="meta">{pair.why.join(" · ")}</span>
+      <div class="stack-sm" role="radiogroup" aria-label="Kumpi jää">
+        {[pair.older, pair.newer].map((i) => (
+          <label class="check" key={i.id}>
+            <input type="radio" name={`keep-${pair.older.id}`} checked={keepId === i.id} onChange={() => setKeepId(i.id)} />
+            <span style="flex:1;min-width:0">
+              <strong>{i.name}</strong>
+              <span class="meta" style="display:block">
+                lisätty {day(i.created_at)} · {i.link_count} linkkiä
+                {i.target_price_cents != null ? ` · tavoite ${eur(i.target_price_cents)}` : ""}
+                {i.best_price_cents != null ? ` · nyt ${eur(i.best_price_cents)}` : ""}
+              </span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <div class="actions">
+        <button class="btn small primary" disabled={busy} onClick={merge}>{busy ? "Yhdistetään…" : "Yhdistä, valittu jää"}</button>
+        <a class="btn small ghost" href={`#/item/${keep.id}`}>Avaa</a>
+        <button class="btn small ghost" onClick={onSkip}>Eri tuotteet</button>
+      </div>
     </div>
   );
 }
